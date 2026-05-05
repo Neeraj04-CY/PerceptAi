@@ -1,0 +1,8 @@
+groq
+pillow
+pyautogui
+opencv-python
+easyocr
+python-dotenv
+requests
+numpy
