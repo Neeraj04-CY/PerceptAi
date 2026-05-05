@@ -1,0 +1,21 @@
+# Environment files — never commit API keys
+perceptai/.env
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Temporary files generated at runtime
+temp_screen.png
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
