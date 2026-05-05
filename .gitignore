@@ -1,0 +1,6 @@
+perceptai/.env
+perceptai/temp_screen.png
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
