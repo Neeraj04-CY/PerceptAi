@@ -146,7 +146,7 @@ perceptai/
 **Neeraj** — Computer Engineering Student, Maharashtra, India  
 Building the perception layer the agent ecosystem is missing.
 
-[GitHub](https://github.com/Neeraj04-CY/PerceptAi) • [LinkedIn](https://linkedin.com/in/your-profile)
+[GitHub](https://github.com/Neeraj04-CY/PerceptAi) • [LinkedIn](https://www.linkedin.com/in/neerajpatil-cs/)
 
 ---
 
