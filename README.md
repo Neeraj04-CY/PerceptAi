@@ -7,7 +7,7 @@
 *Give AI agents eyes and hands on ANY screen — not just browsers*
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active%20Development-orange.svg)]()
 
 </div>
@@ -152,4 +152,4 @@ Building the perception layer the agent ecosystem is missing.
 
 ## License
 
-MIT — free to use, modify, and build on.
+Apache 2.0 — free to use, modify, and build on.
