@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 temp_screen.png
 examples/temp_screen.png
+.vscode/
