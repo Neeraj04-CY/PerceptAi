@@ -116,36 +116,113 @@ class PerceptAgent:
 
         return {"success": False, "error": f"Unknown action: {action}"}
 
-    def run(self, steps):
+    def run(self, steps, instruction=""):
+        import time as _time
+        from core.healer import diagnose_failure
+        from core.memory import (
+            remember_interface, remember_task,
+            recall_element,
+        )
+
         print(f"\nPerceptAgent: {self.task}")
         print("=" * 52)
 
-        for step in steps:
-            step_num = step.get("step_number", "?")
+        start_time = _time.time()
+        current_steps = steps.copy()
+        step_index = 0
+        max_healing_attempts = 2
+
+        while step_index < len(current_steps):
+            step = current_steps[step_index]
+            step_num = step.get("step_number", step_index + 1)
             desc = step.get("description", "")
             print(f"\nStep {step_num}: {desc}")
 
-            before_count = len(perceive().get("text_blocks", []))
             result = self.execute_step(step)
 
             self.steps_taken.append({
                 "step": step,
-                "result": result
+                "result": result,
             })
 
-            if result and result.get("success") is False:
-                print(f"    ⚠ WARNING: {result.get('error', 'Unknown error')}")
+            failed = (
+                result and
+                result.get("success") is False
+            )
 
-            action = step.get("action", "")
-            if action not in {"wait", "type", "clear_type"}:
-                changed, _ = self.verify_change(before_count)
-                if not changed:
-                    print("    ✗ Verification failed: no screen change detected")
-                    return False
+            if failed:
+                print(f"    ⚠ Step failed: {result.get('error', 'unknown')}")
+
+                healing_attempt = 0
+                healed = False
+
+                while healing_attempt < max_healing_attempts:
+                    print(f"    🔄 Healing attempt {healing_attempt + 1}...")
+
+                    current_screen = perceive()
+
+                    context_lines = []
+                    for block in current_screen["text_blocks"][:15]:
+                        pos = block["position"]
+                        context_lines.append(
+                            f"'{block['text']}' at x:{pos['x']}, y:{pos['y']}"
+                        )
+                    context = "\n".join(context_lines)
+
+                    recovery = diagnose_failure(
+                        step,
+                        context,
+                        result.get("error", "step failed"),
+                    )
+
+                    print(f"    Diagnosis: {recovery.get('diagnosis')}")
+
+                    recovery_steps = recovery.get("recovery_steps", [])
+
+                    if recovery_steps and recovery.get("confidence", 0) > 0.5:
+                        recovery_success = True
+                        for r_step in recovery_steps:
+                            r_result = self.execute_step(r_step)
+                            if r_result and r_result.get("success") is False:
+                                recovery_success = False
+                                break
+
+                        if recovery_success:
+                            print("    ✓ Healed successfully")
+                            healed = True
+                            break
+
+                    healing_attempt += 1
+                    _time.sleep(1)
+
+                if not healed:
+                    print(f"    ✗ Could not heal step {step_num}. Continuing...")
+
+            if result and result.get("success") is not False:
+                try:
+                    screen = perceive()
+                    app_context = screen.get("vision", {}).get("page_context", "unknown")
+                    elements = screen.get("vision", {}).get("elements", [])
+                    if elements:
+                        remember_interface(app_context, elements)
+                except Exception:
+                    pass
 
             wait_time = float(step.get("wait", 0.5))
-            time.sleep(wait_time)
+            _time.sleep(wait_time)
+            step_index += 1
+
+        execution_time = _time.time() - start_time
+        success = True
+
+        if instruction:
+            remember_task(
+                instruction,
+                steps,
+                success,
+                execution_time,
+            )
 
         print(f"\n{'=' * 52}")
-        print(f"Completed {len(self.steps_taken)} steps")
+        print(f"Completed {len(self.steps_taken)} steps in {execution_time:.1f}s")
         return True

@@ -58,7 +58,7 @@ separator()
 
 time.sleep(1)
 agent = PerceptAgent(plan["task"])
-success = agent.run(steps)
+success = agent.run(steps, instruction=instruction)
 
 separator()
 if success:
