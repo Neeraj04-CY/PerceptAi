@@ -3,7 +3,8 @@ import base64
 import json
 import time
 from pathlib import Path
-from PIL import ImageGrab
+from PIL import ImageGrab, Image
+import numpy as np
 import easyocr
 from groq import Groq
 from dotenv import load_dotenv
@@ -13,8 +14,32 @@ load_dotenv()
 # Absolute path for temp screenshot — works from any directory
 TEMP_SCREENSHOT = str(Path(__file__).parent.parent / "temp_screen.png")
 
-reader = easyocr.Reader(['en'], gpu=False)
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Global instances — loaded once per session
+_reader = None
+_client = None
+_fast_cache = {
+    "timestamp": 0.0,
+    "region": None,
+    "result": None,
+}
+
+
+def get_reader():
+    """Lazy load EasyOCR to avoid repeated model loads."""
+    global _reader
+    if _reader is None:
+        print("  Loading perception engine...")
+        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+        print("  Perception engine ready.")
+    return _reader
+
+
+def get_client():
+    """Lazy load Groq client once per session."""
+    global _client
+    if _client is None:
+        _client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    return _client
 
 
 def capture_screen(region=None):
@@ -36,10 +61,21 @@ def get_element_center(bbox):
     return x, y
 
 
-def perceive(region=None):
-    capture_screen(region)
+def _prepare_ocr_image(image, max_side=960):
+    """Downscale image for faster OCR while preserving aspect ratio."""
+    width, height = image.size
+    scale = max(width, height) / float(max_side)
+    if scale <= 1:
+        return image
+    new_size = (int(width / scale), int(height / scale))
+    return image.resize(new_size, Image.BILINEAR)
 
-    ocr_results = reader.readtext(TEMP_SCREENSHOT)
+
+def perceive(region=None):
+    screenshot = capture_screen(region)
+
+    ocr_image = _prepare_ocr_image(screenshot)
+    ocr_results = get_reader().readtext(np.array(ocr_image))
     
     text_blocks = []
     ocr_map = {}
@@ -61,7 +97,7 @@ def perceive(region=None):
 
     image_data = encode_image(TEMP_SCREENSHOT)
 
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
         messages=[
             {
@@ -145,6 +181,58 @@ IMPORTANT: Use exact visible text. Return ONLY JSON."""
         "screenshot_path": TEMP_SCREENSHOT,
         "timestamp": time.time()
     }
+
+
+def perceive_fast(region=None, force_refresh=False):
+    """
+    OCR-only perception. Use for simple element finding tasks.
+    No Vision API call.
+    """
+    now = time.time()
+    if (
+        not force_refresh
+        and _fast_cache["result"] is not None
+        and _fast_cache["region"] == region
+        and (now - _fast_cache["timestamp"]) < 0.8
+    ):
+        return _fast_cache["result"]
+
+    screenshot = capture_screen(region)
+
+    ocr_image = _prepare_ocr_image(screenshot)
+    ocr_results = get_reader().readtext(np.array(ocr_image))
+
+    text_blocks = []
+    ocr_map = {}
+
+    for result in ocr_results:
+        bbox, text, confidence = result
+        x, y = get_element_center(bbox)
+        block = {
+            "text": text,
+            "confidence": round(confidence, 3),
+            "position": {"x": x, "y": y},
+            "bounds": {
+                "top_left": [int(bbox[0][0]), int(bbox[0][1])],
+                "bottom_right": [int(bbox[2][0]), int(bbox[2][1])],
+            },
+        }
+        text_blocks.append(block)
+        ocr_map[text.lower().strip()] = {"x": x, "y": y}
+
+    result = {
+        "text_blocks": text_blocks,
+        "vision": {"elements": [], "page_context": "unknown"},
+        "screenshot_path": TEMP_SCREENSHOT,
+        "timestamp": now,
+        "mode": "fast",
+    }
+
+    _fast_cache["timestamp"] = now
+    _fast_cache["region"] = region
+    _fast_cache["result"] = result
+
+    return result
 
 
 def find_element(perception_result, query):

@@ -1,6 +1,6 @@
 import time
 import pyautogui
-from core.perception import perceive, find_element
+from core.perception import perceive, perceive_fast, find_element
 from core.action import click, type_text, clear_and_type
 from core.os_control import (
     open_app, focus_window, navigate_to_url, get_screen_size
@@ -14,21 +14,37 @@ class PerceptAgent:
         self.max_retries = 3
 
     def perceive_and_find(self, query):
+        """
+        Try fast OCR perception first.
+        Fall back to full vision only if needed.
+        """
         for attempt in range(self.max_retries):
-            result = perceive()
+            result = perceive_fast()
             element = find_element(result, query)
+
             if element:
                 pos = element["position"]
                 if pos["x"] > 0 and pos["y"] > 0:
                     return element, result
+
+            if attempt == 1:
+                print("    Fast mode failed, trying full vision...")
+                result = perceive()
+                element = find_element(result, query)
+                if element:
+                    pos = element["position"]
+                    if pos["x"] > 0 and pos["y"] > 0:
+                        return element, result
+
             print(f"    Retry {attempt + 1}/{self.max_retries}: '{query}' not found")
-            time.sleep(1.2)
+            time.sleep(1)
+
         return None, None
 
     def verify_change(self, previous_text_count):
         """Re-perceive and check if screen changed"""
         time.sleep(0.8)
-        result = perceive()
+        result = perceive_fast(force_refresh=True)
         new_count = len(result.get("text_blocks", []))
         changed = new_count != previous_text_count
         return changed, result
@@ -36,7 +52,7 @@ class PerceptAgent:
     def verify_text_present(self, expected_text):
         """Re-perceive and confirm text appears on screen"""
         time.sleep(0.6)
-        result = perceive()
+        result = perceive_fast(force_refresh=True)
         found = find_element(result, expected_text)
         return found is not None, result
 
@@ -159,7 +175,7 @@ class PerceptAgent:
                 while healing_attempt < max_healing_attempts:
                     print(f"    🔄 Healing attempt {healing_attempt + 1}...")
 
-                    current_screen = perceive()
+                    current_screen = perceive_fast(force_refresh=True)
 
                     context_lines = []
                     for block in current_screen["text_blocks"][:15]:
@@ -200,9 +216,17 @@ class PerceptAgent:
 
             if result and result.get("success") is not False:
                 try:
-                    screen = perceive()
+                    screen = perceive_fast()
                     app_context = screen.get("vision", {}).get("page_context", "unknown")
-                    elements = screen.get("vision", {}).get("elements", [])
+                    elements = [
+                        {
+                            "text": block.get("text", ""),
+                            "type": "text",
+                            "position": block.get("position", {}),
+                            "confidence": block.get("confidence", 0.0),
+                        }
+                        for block in screen.get("text_blocks", [])
+                    ]
                     if elements:
                         remember_interface(app_context, elements)
                 except Exception:

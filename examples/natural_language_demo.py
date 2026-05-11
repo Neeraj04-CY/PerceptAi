@@ -3,7 +3,7 @@ import time
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.perception import perceive
+from core.perception import perceive_fast
 from core.planner import plan_task
 from core.agent import PerceptAgent
 from core.os_control import get_open_windows
@@ -31,7 +31,7 @@ open_windows = get_open_windows()
 time.sleep(0.5)
 
 print("  [2/3] Perceiving screen...")
-screen = perceive()
+screen = perceive_fast(force_refresh=True)
 elements_found = len(screen["text_blocks"])
 print(f"        {elements_found} elements detected")
 
