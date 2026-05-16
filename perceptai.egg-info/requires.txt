@@ -1,0 +1,10 @@
+groq
+pillow
+pyautogui
+pyperclip
+opencv-python
+easyocr
+python-dotenv
+requests
+numpy
+psutil

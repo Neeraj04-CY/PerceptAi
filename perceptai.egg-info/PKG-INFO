@@ -1,3 +1,40 @@
+Metadata-Version: 2.4
+Name: perceptai
+Version: 0.1.1
+Summary: PerceptAI: screen-driven automation without DOM access.
+Author: Neeraj Patil
+License: MIT
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Topic :: Software Development :: Libraries
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: groq
+Requires-Dist: pillow
+Requires-Dist: pyautogui
+Requires-Dist: pyperclip
+Requires-Dist: opencv-python
+Requires-Dist: easyocr
+Requires-Dist: python-dotenv
+Requires-Dist: requests
+Requires-Dist: numpy
+Requires-Dist: psutil
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
 ## Installation
 
 ```bash
