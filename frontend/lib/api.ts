@@ -1,4 +1,11 @@
 export interface ApiSessionStep {
+  step_number: number;
+  description: string;
+  action: string;
+  status: "completed" | "failed";
+  result?: { success: boolean; [key: string]: unknown };
+  timestamp: string;
+  duration: number;
   [key: string]: unknown;
 }
 
@@ -36,4 +43,29 @@ export async function getSessions(signal?: AbortSignal): Promise<ApiSession[]> {
 
   const data = (await res.json()) as ApiSession[] | { sessions: ApiSession[] };
   return Array.isArray(data) ? data : data.sessions || [];
+}
+
+export async function getSession(
+  id: string,
+  signal?: AbortSignal
+): Promise<ApiSession> {
+  const token = getToken();
+  const res = await fetch(
+    `${API_BASE}/dashboard/sessions/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      cache: "no-store",
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to load session (${res.status})`);
+  }
+
+  return (await res.json()) as ApiSession;
 }
