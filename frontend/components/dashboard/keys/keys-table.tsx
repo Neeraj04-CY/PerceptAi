@@ -2,11 +2,21 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Copy, Check, MoreHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
+import {
+  Plus,
+  Copy,
+  Check,
+  MoreHorizontal,
+  ShieldCheck,
+  ShieldOff,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { GlassCard } from "@/components/ui/glass-card";
+import { PageHeader } from "@/components/ui/page-header";
 import { initialKeys, makeFreshKey, type ApiKeyRow } from "./mock";
 import { CreateKeyModal } from "./create-key-modal";
 import { cn } from "@/lib/utils";
+import { pageEntry } from "@/lib/motion";
 
 export function KeysTable() {
   const [keys, setKeys] = useState<ApiKeyRow[]>(initialKeys);
@@ -26,7 +36,11 @@ export function KeysTable() {
       name,
       prefix: fresh.slice(0, 8) + "••••" + fresh.slice(-4),
       env,
-      createdAt: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
+      createdAt: new Date().toLocaleDateString("en-US", {
+        month: "short",
+        day: "2-digit",
+        year: "numeric",
+      }),
       lastUsed: "never",
       status: "active",
       scopes: ["run:write", "run:read"],
@@ -36,32 +50,27 @@ export function KeysTable() {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[15px] font-semibold tracking-tight text-white">Your keys</h2>
-          <p className="mt-1 text-[12.5px] text-white/50 max-w-lg">
-            Each key is signed with HMAC and scoped to a single environment. Revoke instantly — old keys are blacklisted within 200ms globally.
-          </p>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setModalOpen(true)}
-          data-testid="create-key-btn"
-          className="gap-2 shrink-0"
-        >
-          <Plus size={14} strokeWidth={2.5} />
-          New key
-        </Button>
-      </div>
+    <motion.div {...pageEntry} className="space-y-7">
+      <PageHeader
+        eyebrow="Credentials"
+        title="API Keys"
+        description="Each key is signed with HMAC and scoped to a single environment. Revoke instantly — old keys are blacklisted globally within 200ms."
+        action={
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => setModalOpen(true)}
+            data-testid="create-key-btn"
+            className="gap-2"
+          >
+            <Plus size={14} strokeWidth={2.5} />
+            New key
+          </Button>
+        }
+      />
 
-      {/* Keys table */}
-      <div
-        className="rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl overflow-hidden"
-        data-testid="keys-table"
-      >
-        <div className="grid grid-cols-[1.4fr_1.4fr_110px_110px_110px_60px] gap-3 px-5 py-3 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">
+      <GlassCard padding="none" data-testid="keys-table" className="overflow-hidden">
+        <div className="grid grid-cols-[1.4fr_1.4fr_110px_110px_110px_60px] gap-3 px-5 py-3 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-[0.22em] text-white/40">
           <div>Name</div>
           <div>Key</div>
           <div>Env</div>
@@ -91,7 +100,7 @@ export function KeysTable() {
                 )}
                 <span className="text-[13px] text-white truncate">{k.name}</span>
               </div>
-              <div className="mt-1 flex items-center gap-1.5">
+              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                 {k.scopes.map((s) => (
                   <span
                     key={s}
@@ -104,7 +113,9 @@ export function KeysTable() {
             </div>
 
             <div className="flex items-center gap-2 min-w-0">
-              <code className="font-mono text-[12px] text-white/75 truncate">{k.prefix}</code>
+              <code className="font-mono text-[12px] text-white/75 truncate">
+                {k.prefix}
+              </code>
               <button
                 onClick={() => handleCopy(k)}
                 disabled={k.status === "revoked"}
@@ -112,7 +123,11 @@ export function KeysTable() {
                 className="opacity-0 group-hover:opacity-100 transition-opacity rounded-md border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06] h-6 w-6 flex items-center justify-center text-white/65 disabled:opacity-30"
                 aria-label="Copy"
               >
-                {copiedId === k.id ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
+                {copiedId === k.id ? (
+                  <Check size={11} className="text-accent" />
+                ) : (
+                  <Copy size={11} />
+                )}
               </button>
             </div>
 
@@ -142,21 +157,25 @@ export function KeysTable() {
             </div>
           </motion.div>
         ))}
-      </div>
+      </GlassCard>
 
-      {/* Footer note */}
-      <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 flex items-start gap-3">
+      <GlassCard padding="sm" className="flex items-start gap-3 bg-white/[0.02]">
         <ShieldCheck size={14} className="text-accent mt-0.5 shrink-0" />
         <div>
           <div className="text-[13px] text-white">Best practices</div>
           <div className="mt-1 text-[12px] text-white/55 leading-relaxed">
-            Rotate production keys every 90 days. Never commit keys to source control —
-            use environment variables and a secrets manager like Doppler, Vault, or Infisical.
+            Rotate production keys every 90 days. Never commit keys to source
+            control — use environment variables and a secrets manager like
+            Doppler, Vault, or Infisical.
           </div>
         </div>
-      </div>
+      </GlassCard>
 
-      <CreateKeyModal open={modalOpen} onOpenChange={setModalOpen} onCreate={handleCreate} />
-    </div>
+      <CreateKeyModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        onCreate={handleCreate}
+      />
+    </motion.div>
   );
 }

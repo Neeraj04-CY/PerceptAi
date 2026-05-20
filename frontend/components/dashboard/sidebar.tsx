@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  LayoutDashboard,
   PlayCircle,
   Layers,
   KeyRound,
@@ -16,21 +17,35 @@ import {
 import { cn } from "@/lib/utils";
 
 const nav = [
+  { label: "Overview", href: "/dashboard/overview", icon: LayoutDashboard, testid: "nav-overview", enabled: true },
   { label: "Run Task", href: "/dashboard", icon: PlayCircle, testid: "nav-run", enabled: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
   { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
-  { label: "Usage", href: "#", icon: BarChart3, testid: "nav-usage", enabled: false },
+  { label: "Analytics", href: "#", icon: BarChart3, testid: "nav-analytics", enabled: false },
   { label: "Settings", href: "#", icon: Settings, testid: "nav-settings", enabled: false },
 ];
 
-export function Sidebar() {
+export interface SidebarUser {
+  email?: string;
+  plan?: string;
+  initials?: string;
+}
+
+export function Sidebar({ user }: { user?: SidebarUser }) {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+
+  const initials =
+    user?.initials ||
+    (user?.email
+      ? user.email.split("@")[0].slice(0, 2).toUpperCase()
+      : "PA");
+  const emailDisplay = user?.email || "you@perceptai.dev";
 
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 h-screen border-r border-white/[0.06] bg-[#0A0A0A] flex flex-col transition-[width] duration-300 ease-out hidden md:flex",
+        "fixed left-0 top-0 z-40 h-screen border-r border-white/[0.06] bg-[#0A0A0A] flex-col transition-[width] duration-300 ease-out hidden md:flex",
         collapsed ? "w-[64px]" : "w-[240px]"
       )}
       data-testid="sidebar"
@@ -70,7 +85,7 @@ export function Sidebar() {
       </Link>
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
+      <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-0.5">
         {nav.map((item) => {
           const active = item.enabled && pathname === item.href;
           const Icon = item.icon;
@@ -80,7 +95,7 @@ export function Sidebar() {
               href={item.enabled ? item.href : "#"}
               data-testid={item.testid}
               className={cn(
-                "group relative flex items-center gap-3 rounded-lg px-3 h-9 text-sm transition-colors",
+                "group relative flex items-center gap-3 rounded-lg px-3 h-9 text-[13px] transition-colors",
                 active
                   ? "bg-white/[0.04] text-white"
                   : "text-white/55 hover:text-white hover:bg-white/[0.02]",
@@ -96,9 +111,7 @@ export function Sidebar() {
                 />
               )}
               <Icon size={16} strokeWidth={1.6} className="shrink-0" />
-              {!collapsed && (
-                <span className="truncate flex-1 text-[13px]">{item.label}</span>
-              )}
+              {!collapsed && <span className="truncate flex-1">{item.label}</span>}
               {!collapsed && !item.enabled && (
                 <span className="text-[9px] font-mono uppercase tracking-wider text-white/30">
                   soon
@@ -119,12 +132,16 @@ export function Sidebar() {
           data-testid="sidebar-user"
         >
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-accent/60 to-accent/20 flex items-center justify-center text-[11px] font-medium text-black shrink-0">
-            EM
+            {initials}
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
-              <div className="text-[13px] text-white truncate">Emil Marquez</div>
-              <div className="text-[11px] text-white/40 truncate font-mono">pro · seat 01</div>
+              <div className="text-[12.5px] text-white truncate" data-testid="sidebar-user-email">
+                {emailDisplay}
+              </div>
+              <div className="text-[11px] text-white/40 truncate font-mono">
+                {user?.plan || "pro · seat 01"}
+              </div>
             </div>
           )}
         </div>
@@ -136,7 +153,13 @@ export function Sidebar() {
             collapsed && "justify-center"
           )}
         >
-          {collapsed ? <ChevronsRight size={14} /> : <><ChevronsLeft size={14} /> Collapse</>}
+          {collapsed ? (
+            <ChevronsRight size={14} />
+          ) : (
+            <>
+              <ChevronsLeft size={14} /> Collapse
+            </>
+          )}
         </button>
       </div>
     </aside>
@@ -151,23 +174,25 @@ export function MobileBottomNav() {
       data-testid="mobile-bottom-nav"
     >
       <div className="flex items-center justify-around h-16 px-2">
-        {nav.filter((n) => n.enabled).map((item) => {
-          const Icon = item.icon;
-          const active = pathname === item.href;
-          return (
-            <Link
-              key={item.label}
-              href={item.href}
-              className={cn(
-                "flex flex-col items-center justify-center gap-1 flex-1 h-full text-[10px] font-mono uppercase tracking-wider",
-                active ? "text-accent" : "text-white/45"
-              )}
-            >
-              <Icon size={18} strokeWidth={1.6} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+        {nav
+          .filter((n) => n.enabled)
+          .map((item) => {
+            const Icon = item.icon;
+            const active = pathname === item.href;
+            return (
+              <Link
+                key={item.label}
+                href={item.href}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1 flex-1 h-full text-[10px] font-mono uppercase tracking-wider",
+                  active ? "text-accent" : "text-white/45"
+                )}
+              >
+                <Icon size={18} strokeWidth={1.6} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
+import { PageHeader } from "@/components/ui/page-header";
 import { TaskInput } from "@/components/dashboard/run/task-input";
 import { ExecutionTimeline } from "@/components/dashboard/run/execution-timeline";
 import { TerminalLogs } from "@/components/dashboard/run/terminal-logs";
@@ -14,6 +15,7 @@ import {
   type TimelineStep,
   type LogLine,
 } from "@/components/dashboard/run/mock-data";
+import { pageEntry } from "@/lib/motion";
 
 const STEP_DURATIONS = [620, 1180, 1080, 280, 940, 1320, 320]; // ms per step
 
@@ -118,7 +120,14 @@ export default function RunTaskPage() {
   const activeStep = activeIndex >= 0 ? steps[activeIndex] : undefined;
 
   return (
-    <div className="space-y-5">
+    <motion.div {...pageEntry} className="space-y-7">
+      <PageHeader
+        eyebrow="Runtime"
+        title="Run Task"
+        description="Spin up a perception-driven agent run in seconds. Watch every step replay live."
+      />
+
+      <div className="space-y-5">
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -143,7 +152,8 @@ export default function RunTaskPage() {
         />
         <SessionInfo meta={meta} />
       </motion.div>
-    </div>
+      </div>
+    </motion.div>
   );
 }
 

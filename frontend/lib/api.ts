@@ -69,3 +69,31 @@ export async function getSession(
 
   return (await res.json()) as ApiSession;
 }
+
+export interface ApiStats {
+  total_sessions?: number;
+  success_rate?: number;
+  avg_duration?: number;
+  monthly_usage?: number;
+  monthly_limit?: number;
+  [key: string]: unknown;
+}
+
+export async function getStats(signal?: AbortSignal): Promise<ApiStats> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/dashboard/stats`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to load stats (${res.status})`);
+  }
+
+  return (await res.json()) as ApiStats;
+}

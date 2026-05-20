@@ -6,37 +6,44 @@ import { Search, Bell, Command } from "lucide-react";
 
 const titles: Record<string, { title: string; sub: string }> = {
   "/dashboard": { title: "Run Task", sub: "Spin up a perception-driven agent run in seconds" },
+  "/dashboard/overview": { title: "Overview", sub: "Monitor executions, runtime health, and platform activity" },
   "/dashboard/sessions": { title: "Sessions", sub: "Replay, audit, and triage every agent run" },
   "/dashboard/keys": { title: "API Keys", sub: "Manage credentials for production and dev environments" },
 };
 
+function matchTitle(pathname: string) {
+  if (pathname.startsWith("/dashboard/sessions/") && pathname !== "/dashboard/sessions") {
+    return { title: "Session detail", sub: "Replay traces and inspect step-level perception" };
+  }
+  return titles[pathname] || { title: "Dashboard", sub: "" };
+}
+
 export function Topbar() {
   const pathname = usePathname();
-  const meta = titles[pathname] || { title: "Dashboard", sub: "" };
+  const meta = matchTitle(pathname);
 
   return (
     <header
       className="sticky top-0 z-30 h-[64px] border-b border-white/[0.06] bg-[#050505]/85 backdrop-blur-xl"
       data-testid="topbar"
     >
-      <div className="h-full px-6 flex items-center justify-between gap-6">
+      <div className="h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-6">
         <motion.div
           key={pathname}
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          className="min-w-0"
+          className="min-w-0 flex items-center gap-3"
         >
-          <div className="flex items-center gap-2">
-            <h1 className="text-[15px] font-semibold tracking-tight text-white truncate" data-testid="topbar-title">
+          <RuntimeIndicator />
+          <EnvBadge env="production" />
+          <div className="hidden lg:block h-5 w-px bg-white/[0.08]" />
+          <div className="hidden lg:block min-w-0">
+            <span className="text-[13.5px] text-white truncate" data-testid="topbar-title">
               {meta.title}
-            </h1>
-            <span className="hidden sm:inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-              <span className="h-1 w-1 rounded-full bg-accent animate-pulse" />
-              runtime online
             </span>
+            <span className="ml-3 text-[12px] text-white/40 truncate">{meta.sub}</span>
           </div>
-          <p className="hidden md:block text-[12px] text-white/45 mt-0.5 truncate">{meta.sub}</p>
         </motion.div>
 
         <div className="flex items-center gap-2">
@@ -61,5 +68,38 @@ export function Topbar() {
         </div>
       </div>
     </header>
+  );
+}
+
+function RuntimeIndicator() {
+  return (
+    <div
+      className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 h-7"
+      data-testid="runtime-indicator"
+    >
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+      </span>
+      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/70">
+        Runtime online
+      </span>
+    </div>
+  );
+}
+
+function EnvBadge({ env }: { env: "production" | "staging" | "development" }) {
+  const map = {
+    production: "bg-accent/10 text-accent border-accent/25",
+    staging: "bg-[#E8C44A]/10 text-[#E8C44A] border-[#E8C44A]/25",
+    development: "bg-white/[0.04] text-white/60 border-white/[0.10]",
+  } as const;
+  return (
+    <span
+      className={`inline-flex items-center rounded-md border px-2 h-6 font-mono text-[10px] uppercase tracking-[0.2em] ${map[env]}`}
+      data-testid="env-badge"
+    >
+      {env}
+    </span>
   );
 }

@@ -7,12 +7,16 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Search, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
+import { GlassCard } from "@/components/ui/glass-card";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { getSessions, type ApiSession } from "@/lib/api";
-import { SessionStatusPill } from "./session-status-pill";
 import { SkeletonRow } from "./skeleton-row";
-import { EmptyState } from "./empty-state";
+import { EmptyState as SessionsEmptyState } from "./empty-state";
 import { ErrorState } from "./error-state";
 import { formatRelativeTime, truncate } from "./format";
+import { pageEntry } from "@/lib/motion";
 
 type Filter = "all" | "completed" | "failed";
 
@@ -83,35 +87,36 @@ export function SessionsView() {
   const total = sessions?.length ?? 0;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className="space-y-5"
-    >
-      {/* Header row */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[22px] sm:text-2xl font-semibold tracking-tight text-white" data-testid="sessions-title">
+    <motion.div {...pageEntry} className="space-y-7">
+      <PageHeader
+        eyebrow="History"
+        title={
+          <span className="flex items-center gap-3 flex-wrap">
             Sessions
-          </h1>
-          <CountBadge value={total} loading={loading} />
-          {refreshing && !loading && (
-            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-white/40">
-              <Loader2 size={11} className="animate-spin" />
-              refreshing
+            <span
+              className="inline-flex items-center rounded-md border border-white/[0.10] bg-white/[0.03] px-2 h-6 font-mono text-[11px] text-white/55"
+              data-testid="sessions-count"
+            >
+              {loading ? "…" : total}
             </span>
-          )}
-        </div>
-        <Link
-          href="/dashboard"
-          data-testid="sessions-new-task"
-          className="inline-flex items-center gap-1.5 rounded-full bg-accent text-black h-9 px-4 text-[13px] font-medium hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.55)] transition-shadow"
-        >
-          New Task
-          <ArrowRight size={13} />
-        </Link>
-      </div>
+            {refreshing && !loading && (
+              <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-white/40">
+                <Loader2 size={11} className="animate-spin" />
+                refreshing
+              </span>
+            )}
+          </span>
+        }
+        description="Replay, audit, and triage every agent run."
+        action={
+          <Link href="/dashboard">
+            <Button variant="primary" size="md" data-testid="sessions-new-task" className="gap-1.5">
+              New Task
+              <ArrowRight size={13} />
+            </Button>
+          </Link>
+        }
+      />
 
       {/* Filter row */}
       <div className="space-y-3">
@@ -152,11 +157,8 @@ export function SessionsView() {
       {error ? (
         <ErrorState message={error} onRetry={() => load("initial")} />
       ) : (
-        <div
-          className="rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-xl overflow-hidden"
-          data-testid="sessions-table"
-        >
-          <div className="grid grid-cols-[1.8fr_120px_110px_110px_110px_24px] gap-3 px-5 py-3 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">
+        <GlassCard padding="none" data-testid="sessions-table" className="overflow-hidden">
+          <div className="grid grid-cols-[1.8fr_120px_110px_110px_110px_24px] gap-3 px-5 py-3 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-[0.22em] text-white/40">
             <div>Instruction</div>
             <div>Status</div>
             <div>Steps</div>
@@ -170,7 +172,7 @@ export function SessionsView() {
               <SkeletonRows />
             ) : filtered.length === 0 ? (
               sessions && sessions.length === 0 ? (
-                <EmptyState />
+                <SessionsEmptyState />
               ) : (
                 <NoMatchState />
               )
@@ -187,20 +189,9 @@ export function SessionsView() {
               </AnimatePresence>
             )}
           </div>
-        </div>
+        </GlassCard>
       )}
     </motion.div>
-  );
-}
-
-function CountBadge({ value, loading }: { value: number; loading: boolean }) {
-  return (
-    <span
-      className="inline-flex items-center rounded-md border border-white/[0.10] bg-white/[0.03] px-2 h-6 font-mono text-[11px] text-white/55"
-      data-testid="sessions-count"
-    >
-      {loading ? "…" : value}
-    </span>
   );
 }
 
@@ -274,7 +265,7 @@ function Row({
         </div>
       </div>
       <div>
-        <SessionStatusPill status={session.status} />
+        <StatusBadge status={session.status} />
       </div>
       <div className="font-mono text-[12px] text-white/55">
         {stepsCount} {stepsCount === 1 ? "step" : "steps"}
