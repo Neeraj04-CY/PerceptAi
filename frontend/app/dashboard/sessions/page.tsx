@@ -1,5 +1,5 @@
-import { SessionsTable } from "@/components/dashboard/sessions/sessions-table";
+import { SessionsView } from "@/components/dashboard/sessions/sessions-view";
 
 export default function SessionsPage() {
-  return <SessionsTable />;
+  return <SessionsView />;
 }

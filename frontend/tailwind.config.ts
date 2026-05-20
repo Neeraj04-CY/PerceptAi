@@ -50,11 +50,16 @@ const config: Config = {
           "0%,100%": { opacity: "0.5" },
           "50%": { opacity: "0.85" },
         },
+        shimmer: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(100%)" },
+        },
       },
       animation: {
         ticker: "ticker-x 40s linear infinite",
         "pulse-dot": "pulse-dot 1.6s ease-in-out infinite",
         "glow-pulse": "glow-pulse 6s ease-in-out infinite",
+        shimmer: "shimmer 1.6s infinite",
       },
     },
   },
