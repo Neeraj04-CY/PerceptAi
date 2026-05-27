@@ -12,6 +12,7 @@ import {
   BarChart3,
   Settings,
   CalendarClock,
+  BookOpen,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { label: "Overview", href: "/dashboard/overview", icon: LayoutDashboard, testid: "nav-overview", enabled: true },
   { label: "Run Task", href: "/dashboard", icon: PlayCircle, testid: "nav-run", enabled: true },
+  { label: "Playbook", href: "/dashboard/playbook", icon: BookOpen, testid: "nav-playbook", enabled: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
   { label: "Scheduled", href: "/dashboard/scheduled", icon: CalendarClock, testid: "nav-scheduled", enabled: true },
   { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
