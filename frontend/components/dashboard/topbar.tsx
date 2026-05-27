@@ -8,6 +8,7 @@ const titles: Record<string, { title: string; sub: string }> = {
   "/dashboard": { title: "Run Task", sub: "Spin up a perception-driven agent run in seconds" },
   "/dashboard/overview": { title: "Overview", sub: "Monitor executions, runtime health, and platform activity" },
   "/dashboard/sessions": { title: "Sessions", sub: "Replay, audit, and triage every agent run" },
+  "/dashboard/scheduled": { title: "Scheduled Tasks", sub: "Automate recurring agent runs on your schedule" },
   "/dashboard/keys": { title: "API Keys", sub: "Manage credentials for production and dev environments" },
 };
 

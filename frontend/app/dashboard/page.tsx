@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { PageHeader } from "@/components/ui/page-header";
 import { TaskInput } from "@/components/dashboard/run/task-input";
@@ -20,6 +21,17 @@ import { pageEntry } from "@/lib/motion";
 const STEP_DURATIONS = [620, 1180, 1080, 280, 940, 1320, 320]; // ms per step
 
 export default function RunTaskPage() {
+  return (
+    <Suspense fallback={null}>
+      <RunTaskInner />
+    </Suspense>
+  );
+}
+
+function RunTaskInner() {
+  const searchParams = useSearchParams();
+  const prefillTask = searchParams.get("task") || undefined;
+
   const [steps, setSteps] = useState<TimelineStep[]>(initialSteps);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -133,7 +145,7 @@ export default function RunTaskPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       >
-        <TaskInput running={running} onRun={handleRun} onStop={handleStop} />
+        <TaskInput running={running} onRun={handleRun} onStop={handleStop} initialTask={prefillTask} />
       </motion.div>
 
       <ExecutionTimeline steps={steps} activeIndex={activeIndex} visible={timelineVisible} />

@@ -11,6 +11,7 @@ import {
   KeyRound,
   BarChart3,
   Settings,
+  CalendarClock,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -20,6 +21,7 @@ const nav = [
   { label: "Overview", href: "/dashboard/overview", icon: LayoutDashboard, testid: "nav-overview", enabled: true },
   { label: "Run Task", href: "/dashboard", icon: PlayCircle, testid: "nav-run", enabled: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
+  { label: "Scheduled", href: "/dashboard/scheduled", icon: CalendarClock, testid: "nav-scheduled", enabled: true },
   { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
   { label: "Analytics", href: "#", icon: BarChart3, testid: "nav-analytics", enabled: false },
   { label: "Settings", href: "#", icon: Settings, testid: "nav-settings", enabled: false },

@@ -9,6 +9,7 @@ interface TaskInputProps {
   running: boolean;
   onRun: (task: string, keyId: string) => void;
   onStop?: () => void;
+  initialTask?: string;
 }
 
 const apiKeys = [
@@ -23,12 +24,21 @@ const suggestions = [
   "Navigate legacy ERP dashboard and export today's invoices",
 ];
 
-export function TaskInput({ running, onRun, onStop }: TaskInputProps) {
-  const [task, setTask] = useState("Launch Chrome and summarize the latest AI news");
+const DEFAULT_TASK = "Launch Chrome and summarize the latest AI news";
+
+export function TaskInput({ running, onRun, onStop, initialTask }: TaskInputProps) {
+  const [task, setTask] = useState(initialTask?.trim() ? initialTask : DEFAULT_TASK);
   const [keyId, setKeyId] = useState(apiKeys[0].id);
   const [open, setOpen] = useState(false);
   const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // Sync if initialTask updates (e.g., URL param change)
+  useEffect(() => {
+    if (initialTask && initialTask.trim()) {
+      setTask(initialTask);
+    }
+  }, [initialTask]);
 
   useEffect(() => {
     if (!ref.current) return;
