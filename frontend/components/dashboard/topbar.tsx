@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { Search, Bell, Command } from "lucide-react";
+import { useCommandPalette } from "@/components/dashboard/command-palette-provider";
 
 const titles: Record<string, { title: string; sub: string }> = {
   "/dashboard": { title: "Run Task", sub: "Spin up a perception-driven agent run in seconds" },
@@ -23,6 +24,7 @@ function matchTitle(pathname: string) {
 export function Topbar() {
   const pathname = usePathname();
   const meta = matchTitle(pathname);
+  const palette = useCommandPalette();
 
   return (
     <header
@@ -50,6 +52,7 @@ export function Topbar() {
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => palette.open()}
             className="hidden md:flex items-center gap-2.5 h-9 px-3 rounded-lg border border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04] transition-colors text-[12px] text-white/55"
             data-testid="topbar-search"
           >

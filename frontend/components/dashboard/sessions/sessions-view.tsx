@@ -50,6 +50,13 @@ export function SessionsView() {
     try {
       const data = await getSessions(controller.signal);
       setSessions(data);
+      // Cache last 3 sessions for the command palette "Recent sessions" group
+      try {
+        const top3 = data.slice(0, 3).map((s) => ({ id: s.id, instruction: s.instruction }));
+        window.localStorage.setItem("perceptai_recent_sessions", JSON.stringify(top3));
+      } catch {
+        // ignore localStorage failures
+      }
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message || "Unknown error");
