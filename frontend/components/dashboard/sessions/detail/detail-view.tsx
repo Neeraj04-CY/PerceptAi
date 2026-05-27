@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ChevronLeft,
@@ -12,6 +13,8 @@ import {
   Copy,
   Check,
   AlertTriangle,
+  RefreshCw,
+  Download,
 } from "lucide-react";
 import { getSession, type ApiSession } from "@/lib/api";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -22,12 +25,15 @@ import { StepTimeline } from "./step-timeline";
 import { RuntimeLogs } from "./runtime-logs";
 import { CopyToast } from "./copy-toast";
 import { DetailSkeleton } from "./skeleton";
+import { ExecutionSummary } from "./execution-summary";
+import { DurationChart } from "./duration-chart";
+import { cn } from "@/lib/utils";
 
 export function DetailView({ id }: { id: string }) {
   const [session, setSession] = useState<ApiSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copiedField, setCopiedField] = useState<"id" | "instruction" | null>(null);
   const [toast, setToast] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,20 +64,23 @@ export function DetailView({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const handleCopy = async () => {
-    if (!session) return;
-    try {
-      await navigator.clipboard.writeText(session.id);
-    } catch {
-      // Best effort — still surface the toast
-    }
-    setCopied(true);
+  const showToast = (field: "id" | "instruction") => {
+    setCopiedField(field);
     setToast(true);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => {
       setToast(false);
-      setCopied(false);
+      setCopiedField(null);
     }, 2000);
+  };
+
+  const handleCopy = async (value: string, field: "id" | "instruction") => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // best effort
+    }
+    showToast(field);
   };
 
   return (
@@ -90,7 +99,11 @@ export function DetailView({ id }: { id: string }) {
       ) : error || !session ? (
         <ErrorBlock message={error || "Session not found"} onRetry={load} />
       ) : (
-        <Loaded session={session} copied={copied} onCopy={handleCopy} />
+        <Loaded
+          session={session}
+          copiedField={copiedField}
+          onCopy={handleCopy}
+        />
       )}
 
       <CopyToast visible={toast} />
@@ -100,13 +113,14 @@ export function DetailView({ id }: { id: string }) {
 
 function Loaded({
   session,
-  copied,
+  copiedField,
   onCopy,
 }: {
   session: ApiSession;
-  copied: boolean;
-  onCopy: () => void;
+  copiedField: "id" | "instruction" | null;
+  onCopy: (value: string, field: "id" | "instruction") => void;
 }) {
+  const router = useRouter();
   const completedSteps =
     session.steps?.filter((s) => s.status === "completed").length ?? 0;
   const totalSteps = session.steps?.length ?? 0;
@@ -115,16 +129,67 @@ function Loaded({
       ? `${Number(session.execution_time).toFixed(2)}s`
       : "—";
 
+  const handleRetry = () => {
+    router.push(`/dashboard?task=${encodeURIComponent(session.instruction)}`);
+  };
+
+  const handleExport = () => {
+    const blob = new Blob([JSON.stringify(session, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `session-${session.id.slice(0, 8)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 500);
+  };
+
   return (
     <div className="space-y-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 pb-6 border-b border-white/[0.06]">
-        <h2
-          className="text-[22px] md:text-[26px] font-semibold tracking-tight text-white leading-tight max-w-3xl"
-          data-testid="detail-instruction"
-        >
-          {session.instruction}
-        </h2>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            <h2
+              className="text-[22px] md:text-[26px] font-semibold tracking-tight text-white leading-tight max-w-3xl"
+              data-testid="detail-instruction"
+            >
+              {session.instruction}
+            </h2>
+            <button
+              onClick={() => onCopy(session.instruction, "instruction")}
+              data-testid="copy-instruction"
+              aria-label="Copy instruction"
+              className="shrink-0 mt-1 inline-flex h-7 w-7 items-center justify-center rounded-md border border-white/[0.10] bg-white/[0.04] hover:bg-white/[0.08] text-white/55 transition-colors"
+            >
+              {copiedField === "instruction" ? (
+                <Check size={11} className="text-accent" strokeWidth={3} />
+              ) : (
+                <Copy size={11} />
+              )}
+            </button>
+          </div>
+
+          {/* Action toolbar */}
+          <div className="mt-4 flex items-center gap-2 flex-wrap">
+            <ToolbarButton
+              icon={<RefreshCw size={12} />}
+              label="Re-run this task"
+              testId="rerun-task"
+              onClick={handleRetry}
+            />
+            <ToolbarButton
+              icon={<Download size={12} />}
+              label="Export session"
+              testId="export-session"
+              onClick={handleExport}
+            />
+          </div>
+        </div>
+
         <div className="flex flex-col md:items-end gap-1.5 shrink-0">
           <StatusBadge status={session.status} />
           <span
@@ -182,12 +247,12 @@ function Loaded({
           }
           trailing={
             <button
-              onClick={onCopy}
+              onClick={() => onCopy(session.id, "id")}
               data-testid="copy-session-id"
               aria-label="Copy session ID"
               className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/[0.10] bg-white/[0.04] hover:bg-white/[0.08] text-white/65 transition-colors shrink-0"
             >
-              {copied ? (
+              {copiedField === "id" ? (
                 <Check size={12} className="text-accent" strokeWidth={3} />
               ) : (
                 <Copy size={12} />
@@ -197,7 +262,21 @@ function Loaded({
         />
       </motion.div>
 
-      {/* Timeline */}
+      {/* Execution summary */}
+      <motion.div variants={fadeUp} initial="hidden" animate="show">
+        <ExecutionSummary
+          steps={session.steps || []}
+          status={session.status}
+          duration={duration}
+        />
+      </motion.div>
+
+      {/* Duration chart */}
+      <motion.div variants={fadeUp} initial="hidden" animate="show">
+        <DurationChart steps={session.steps || []} />
+      </motion.div>
+
+      {/* Timeline (now expandable) */}
       <motion.div variants={fadeUp} initial="hidden" animate="show">
         <StepTimeline steps={session.steps || []} />
       </motion.div>
@@ -207,6 +286,35 @@ function Loaded({
         <RuntimeLogs steps={session.steps || []} />
       </motion.div>
     </div>
+  );
+}
+
+function ToolbarButton({
+  icon,
+  label,
+  onClick,
+  testId,
+  intent = "neutral",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  testId?: string;
+  intent?: "neutral" | "accent";
+}) {
+  return (
+    <button
+      onClick={onClick}
+      data-testid={testId}
+      className={cn(
+        "inline-flex items-center gap-1.5 h-8 px-3 rounded-md border bg-white/[0.03] hover:bg-white/[0.06] text-[12px] transition-colors",
+        intent === "neutral" && "border-white/[0.10] text-white/70 hover:text-white",
+        intent === "accent" && "border-accent/30 text-accent hover:bg-accent/[0.08]"
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
