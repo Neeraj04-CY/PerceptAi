@@ -18,6 +18,7 @@ export interface MetricCardProps {
   className?: string;
   testId?: string;
   trailing?: ReactNode;
+  footer?: ReactNode;
 }
 
 export function MetricCard({
@@ -29,6 +30,7 @@ export function MetricCard({
   className,
   testId,
   trailing,
+  footer,
 }: MetricCardProps) {
   return (
     <motion.div
@@ -82,6 +84,8 @@ export function MetricCard({
           )}
         </div>
       )}
+
+      {footer && <div className="mt-3">{footer}</div>}
     </motion.div>
   );
 }

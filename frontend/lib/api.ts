@@ -72,10 +72,16 @@ export async function getSession(
 
 export interface ApiStats {
   total_sessions?: number;
+  successful_sessions?: number;
+  failed_sessions?: number;
   success_rate?: number;
   avg_duration?: number;
+  total_executions_this_month?: number;
+  executions_limit?: number;
   monthly_usage?: number;
   monthly_limit?: number;
+  plan?: string;
+  recent_sessions?: ApiSession[];
   [key: string]: unknown;
 }
 
@@ -96,4 +102,32 @@ export async function getStats(signal?: AbortSignal): Promise<ApiStats> {
   }
 
   return (await res.json()) as ApiStats;
+}
+
+export interface ApiUsage {
+  month?: string;
+  executions_used?: number;
+  executions_limit?: number;
+  plan?: string;
+  percentage_used?: number;
+  [key: string]: unknown;
+}
+
+export async function getUsage(signal?: AbortSignal): Promise<ApiUsage> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/dashboard/usage`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to load usage (${res.status})`);
+  }
+
+  return (await res.json()) as ApiUsage;
 }

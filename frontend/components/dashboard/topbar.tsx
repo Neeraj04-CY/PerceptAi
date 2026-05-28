@@ -12,6 +12,8 @@ const titles: Record<string, { title: string; sub: string }> = {
   "/dashboard/sessions": { title: "Sessions", sub: "Replay, audit, and triage every agent run" },
   "/dashboard/scheduled": { title: "Scheduled Tasks", sub: "Automate recurring agent runs on your schedule" },
   "/dashboard/keys": { title: "API Keys", sub: "Manage credentials for production and dev environments" },
+  "/dashboard/analytics": { title: "Analytics", sub: "Execution trends, quota utilization, and outcome breakdowns" },
+  "/dashboard/settings": { title: "Settings", sub: "Account, preferences, and notification controls" },
 };
 
 function matchTitle(pathname: string) {

@@ -8,14 +8,17 @@ import {
   ArrowRight,
   ArrowUpRight,
   Activity,
-  Clock,
-  Layers,
-  Gauge,
   CheckCircle2,
-  PlayCircle,
-  KeyRound,
-  ChevronRight,
+  Layers,
+  Zap,
   History,
+  PlayCircle,
+  BookOpen,
+  CalendarClock,
+  Copy,
+  Check,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -26,79 +29,70 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/loading-skeleton";
 import {
-  getSessions,
   getStats,
+  getUsage,
   type ApiSession,
   type ApiStats,
+  type ApiUsage,
 } from "@/lib/api";
-import { staggerContainer, fadeUp } from "@/lib/motion";
+import { staggerContainer, fadeUp, pageEntry } from "@/lib/motion";
 import { formatRelativeTime, truncate } from "@/components/dashboard/sessions/format";
 import { cn } from "@/lib/utils";
 
+const API_HOST = "perceptai-production.up.railway.app";
+
 export function OverviewView() {
   const router = useRouter();
-  const [sessions, setSessions] = useState<ApiSession[] | null>(null);
   const [stats, setStats] = useState<ApiStats | null>(null);
+  const [usage, setUsage] = useState<ApiUsage | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
+  const load = async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-
     setLoading(true);
-    Promise.allSettled([
-      getSessions(controller.signal),
-      getStats(controller.signal),
-    ]).then(([sRes, stRes]) => {
-      if (controller.signal.aborted) return;
-      if (sRes.status === "fulfilled") setSessions(sRes.value);
-      else setSessions([]);
-      if (stRes.status === "fulfilled") setStats(stRes.value);
-      setLoading(false);
-    });
+    setError(null);
 
-    return () => controller.abort();
+    const [s, u] = await Promise.allSettled([
+      getStats(controller.signal),
+      getUsage(controller.signal),
+    ]);
+    if (controller.signal.aborted) return;
+
+    if (s.status === "fulfilled") setStats(s.value);
+    if (u.status === "fulfilled") setUsage(u.value);
+
+    // If both failed, surface error
+    if (s.status === "rejected" && u.status === "rejected") {
+      setError((s.reason as Error).message || "Failed to load dashboard data");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+    return () => abortRef.current?.abort();
   }, []);
 
-  const derived = useMemo(() => {
-    const list = sessions ?? [];
-    const total = stats?.total_sessions ?? list.length;
-    const completed = list.filter((s) => s.status === "completed").length;
-    const successRate =
-      stats?.success_rate != null
-        ? Number(stats.success_rate)
-        : list.length
-        ? (completed / list.length) * 100
-        : null;
-    const durations = list
-      .map((s) => s.execution_time)
-      .filter((x): x is number => typeof x === "number" && !Number.isNaN(x));
-    const avg =
-      stats?.avg_duration != null
-        ? Number(stats.avg_duration)
-        : durations.length
-        ? durations.reduce((a, b) => a + b, 0) / durations.length
-        : null;
-    const usage = stats?.monthly_usage ?? list.length;
-    const limit = stats?.monthly_limit ?? 1_000_000;
-    return {
-      total,
-      successRate,
-      avg,
-      usage,
-      limit,
-      latest: list.slice(0, 5),
-    };
-  }, [sessions, stats]);
-
   return (
-    <div className="space-y-8">
+    <motion.div {...pageEntry} className="space-y-6">
       <PageHeader
-        eyebrow="Dashboard"
-        title="Overview"
-        description="Monitor executions, runtime health, and platform activity."
+        title={
+          <span className="flex items-center gap-3 flex-wrap">
+            Overview
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.22em] text-accent">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+              </span>
+              Runtime online
+            </span>
+          </span>
+        }
+        description="Your command center — sessions, runtime health, and quota at a glance."
         action={
           <Link href="/dashboard">
             <Button variant="primary" size="md" data-testid="overview-run-task" className="gap-2">
@@ -109,142 +103,235 @@ export function OverviewView() {
         }
       />
 
-      {/* Metrics row */}
-      <motion.div
-        variants={staggerContainer}
-        initial="hidden"
-        animate="show"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-      >
-        <MetricCard
-          testId="metric-total-sessions"
-          label="Total Sessions"
-          icon={<Layers size={14} />}
-          value={loading ? <Skeleton className="h-8 w-20" /> : formatNumber(derived.total)}
-          sub="all-time agent runs"
-        />
-        <MetricCard
-          testId="metric-success-rate"
-          label="Success Rate"
-          icon={<CheckCircle2 size={14} />}
-          value={
-            loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : derived.successRate != null ? (
-              `${derived.successRate.toFixed(1)}%`
-            ) : (
-              "—"
-            )
-          }
-          sub="last 30 days"
-        />
-        <MetricCard
-          testId="metric-avg-duration"
-          label="Avg Duration"
-          icon={<Clock size={14} />}
-          value={
-            loading ? (
-              <Skeleton className="h-8 w-20" />
-            ) : derived.avg != null ? (
-              `${derived.avg.toFixed(2)}s`
-            ) : (
-              "—"
-            )
-          }
-          sub="median across runs"
-        />
-        <MetricCard
-          testId="metric-monthly-usage"
-          label="Monthly Usage"
-          icon={<Gauge size={14} />}
-          value={loading ? <Skeleton className="h-8 w-20" /> : formatNumber(derived.usage)}
-          sub={`of ${formatNumber(derived.limit)} included`}
-        />
-      </motion.div>
+      {error ? (
+        <ErrorBlock message={error} onRetry={load} />
+      ) : (
+        <>
+          <MetricsRow loading={loading} stats={stats} usage={usage} />
+          <TwoColumns
+            loading={loading}
+            stats={stats}
+            usage={usage}
+            onOpenSession={(id) => router.push(`/dashboard/sessions/${id}`)}
+          />
+        </>
+      )}
+    </motion.div>
+  );
+}
 
-      {/* Recent + Runtime status */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-4">
-        {/* Recent sessions */}
-        <motion.div variants={fadeUp} initial="hidden" animate="show">
-          <GlassCard padding="none" data-testid="recent-sessions">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
-              <SectionLabel>Recent sessions</SectionLabel>
-              <Link
-                href="/dashboard/sessions"
-                className="inline-flex items-center gap-1 text-[12px] text-white/55 hover:text-white transition-colors"
-                data-testid="recent-view-all"
-              >
-                View all
-                <ArrowUpRight size={12} />
-              </Link>
+function MetricsRow({
+  loading,
+  stats,
+  usage,
+}: {
+  loading: boolean;
+  stats: ApiStats | null;
+  usage: ApiUsage | null;
+}) {
+  const total = stats?.total_sessions ?? 0;
+  const successful = stats?.successful_sessions ?? 0;
+  const successRate = total > 0 ? (successful / total) * 100 : null;
+
+  const used = usage?.executions_used ?? stats?.total_executions_this_month ?? 0;
+  const limit = usage?.executions_limit ?? stats?.executions_limit ?? 1_000_000;
+  const pct =
+    usage?.percentage_used != null
+      ? Number(usage.percentage_used)
+      : limit
+      ? (used / limit) * 100
+      : 0;
+  const pctClamped = Math.min(100, Math.max(0, pct));
+  const overQuota = pctClamped > 80;
+
+  return (
+    <motion.div
+      variants={staggerContainer}
+      initial="hidden"
+      animate="show"
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+    >
+      <MetricCard
+        testId="metric-total-sessions"
+        label="Total Sessions"
+        icon={<Layers size={14} />}
+        value={loading ? <Skeleton className="h-7 w-20" /> : formatNumber(total)}
+        sub="all time"
+      />
+      <MetricCard
+        testId="metric-success-rate"
+        label="Success Rate"
+        icon={<CheckCircle2 size={14} />}
+        value={
+          loading ? (
+            <Skeleton className="h-7 w-20" />
+          ) : successRate != null ? (
+            `${successRate.toFixed(0)}%`
+          ) : (
+            "—"
+          )
+        }
+        sub={`${successful} successful`}
+        trend={
+          successRate != null
+            ? {
+                direction: successRate > 80 ? "up" : "flat",
+                value: successRate > 80 ? "healthy" : "monitor",
+              }
+            : undefined
+        }
+      />
+      <MetricCard
+        testId="metric-executions"
+        label="Executions"
+        icon={<Zap size={14} />}
+        value={
+          loading ? (
+            <Skeleton className="h-7 w-24" />
+          ) : (
+            <span className="tabular-nums">
+              {formatNumber(used)}
+              <span className="text-white/30">/{formatNumber(limit)}</span>
+            </span>
+          )
+        }
+        sub={loading ? null : `${pctClamped.toFixed(0)}% used`}
+        footer={
+          loading ? (
+            <Skeleton className="h-[2px] w-full" />
+          ) : (
+            <div className="h-[2px] w-full rounded-full bg-white/[0.06] overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${pctClamped}%` }}
+                transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+                className={cn(
+                  "h-full rounded-full",
+                  overQuota ? "bg-[#FF3B3B]" : "bg-accent"
+                )}
+              />
             </div>
+          )
+        }
+      />
+      <MetricCard
+        testId="metric-api-status"
+        label="API Status"
+        icon={<Activity size={14} />}
+        value={
+          <span className="flex items-center gap-2 text-accent">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 animate-ping" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+            </span>
+            <span className="text-[20px] font-semibold">Operational</span>
+          </span>
+        }
+        sub="Railway · Global"
+      />
+    </motion.div>
+  );
+}
 
-            <div>
-              {loading ? (
-                <RecentLoading />
-              ) : derived.latest.length === 0 ? (
-                <EmptyState
-                  icon={<History size={22} strokeWidth={1.5} />}
-                  title="No sessions yet"
-                  description="Your most recent agent runs will appear here."
-                  minHeight={220}
-                  action={
-                    <Link href="/dashboard">
-                      <Button variant="primary" size="sm" className="gap-1.5">
-                        Run your first task
-                        <ArrowRight size={12} />
-                      </Button>
-                    </Link>
-                  }
-                />
-              ) : (
-                derived.latest.map((s, i) => (
-                  <RecentRow
-                    key={s.id}
-                    session={s}
-                    index={i}
-                    onClick={() => router.push(`/dashboard/sessions/${s.id}`)}
-                  />
-                ))
-              )}
-            </div>
-          </GlassCard>
-        </motion.div>
+function TwoColumns({
+  loading,
+  stats,
+  usage,
+  onOpenSession,
+}: {
+  loading: boolean;
+  stats: ApiStats | null;
+  usage: ApiUsage | null;
+  onOpenSession: (id: string) => void;
+}) {
+  return (
+    <motion.div
+      variants={fadeUp}
+      initial="hidden"
+      animate="show"
+      className="grid grid-cols-1 lg:grid-cols-[60%_40%] gap-4"
+    >
+      <RecentActivity
+        loading={loading}
+        sessions={stats?.recent_sessions || []}
+        onOpenSession={onOpenSession}
+      />
+      <div className="flex flex-col gap-3">
+        <QuotaCard loading={loading} usage={usage} stats={stats} />
+        <QuickActionsCard />
+        <ApiEndpointCard />
+      </div>
+    </motion.div>
+  );
+}
 
-        {/* Runtime status */}
-        <motion.div variants={fadeUp} initial="hidden" animate="show">
-          <RuntimeStatusCard usage={derived.usage} limit={derived.limit} loading={loading} />
-        </motion.div>
+function RecentActivity({
+  loading,
+  sessions,
+  onOpenSession,
+}: {
+  loading: boolean;
+  sessions: ApiSession[];
+  onOpenSession: (id: string) => void;
+}) {
+  const latest = useMemo(() => sessions.slice(0, 5), [sessions]);
+
+  return (
+    <GlassCard padding="none" data-testid="recent-activity">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+        <SectionLabel>Recent activity</SectionLabel>
+        <Link
+          href="/dashboard/sessions"
+          className="inline-flex items-center gap-1 text-[12px] text-accent hover:underline underline-offset-4"
+          data-testid="recent-view-all"
+        >
+          View all
+          <ArrowUpRight size={12} />
+        </Link>
       </div>
 
-      {/* Quick actions */}
-      <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-3">
-        <SectionLabel>Quick actions</SectionLabel>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <QuickAction
-            href="/dashboard"
-            icon={<PlayCircle size={16} />}
-            title="Run New Task"
-            description="Spin up a perception-driven agent run."
-            testId="quick-run"
-          />
-          <QuickAction
-            href="/dashboard/sessions"
-            icon={<Layers size={16} />}
-            title="View Sessions"
-            description="Replay traces and triage failed runs."
-            testId="quick-sessions"
-          />
-          <QuickAction
-            href="/dashboard/keys"
-            icon={<KeyRound size={16} />}
-            title="Manage API Keys"
-            description="Rotate credentials and scope access."
-            testId="quick-keys"
-          />
-        </div>
-      </motion.div>
-    </div>
+      {loading ? (
+        <RecentLoading />
+      ) : latest.length === 0 ? (
+        <EmptyState
+          icon={<History size={20} strokeWidth={1.5} />}
+          title="No sessions yet"
+          description="Run your first task to populate this activity feed."
+          minHeight={240}
+          action={
+            <Link href="/dashboard">
+              <Button variant="primary" size="sm" className="gap-1.5">
+                Run your first task
+                <ArrowRight size={12} />
+              </Button>
+            </Link>
+          }
+        />
+      ) : (
+        <>
+          <div>
+            {latest.map((s, i) => (
+              <RecentRow
+                key={s.id}
+                session={s}
+                index={i}
+                onClick={() => onOpenSession(s.id)}
+              />
+            ))}
+          </div>
+          <div className="px-5 py-3 border-t border-white/[0.04]">
+            <Link
+              href="/dashboard/sessions"
+              className="inline-flex items-center gap-1 text-[12.5px] text-accent hover:underline underline-offset-4"
+              data-testid="view-all-sessions"
+            >
+              View all sessions
+              <ArrowRight size={12} />
+            </Link>
+          </div>
+        </>
+      )}
+    </GlassCard>
   );
 }
 
@@ -254,11 +341,16 @@ function RecentLoading() {
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
-          className="flex items-center gap-4 px-5 py-4 border-b border-white/[0.04] last:border-0"
+          className="flex items-center justify-between gap-4 px-5 py-3 border-b border-white/[0.04] last:border-0"
         >
-          <Skeleton className="h-3 flex-1" />
-          <Skeleton className="h-5 w-20" rounded="full" />
-          <Skeleton className="h-3 w-12" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-4 w-20" rounded="full" />
+          </div>
+          <div className="flex flex-col items-end gap-1.5">
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-3 w-10" />
+          </div>
         </div>
       ))}
     </div>
@@ -278,6 +370,7 @@ function RecentRow({
     session.execution_time != null
       ? `${Number(session.execution_time).toFixed(2)}s`
       : "—";
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
@@ -292,151 +385,226 @@ function RecentRow({
           onClick();
         }
       }}
-      className="group flex items-center gap-4 px-5 py-3.5 border-b border-white/[0.04] last:border-0 cursor-pointer hover:bg-white/[0.02] transition-colors"
-      data-testid={`overview-session-${session.id}`}
+      className="grid grid-cols-[1fr_auto] gap-4 px-5 py-3 border-b border-white/[0.04] last:border-0 cursor-pointer hover:bg-white/[0.02] transition-colors"
+      data-testid={`overview-row-${session.id}`}
     >
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <div className="text-[13px] text-white truncate" title={session.instruction}>
-          {truncate(session.instruction, 60)}
+          {truncate(session.instruction, 45)}
         </div>
-        <div className="mt-0.5 font-mono text-[10.5px] text-white/35 truncate">
-          {session.id}
+        <div className="mt-1.5">
+          <StatusBadge status={session.status} size="sm" />
         </div>
       </div>
-      <StatusBadge status={session.status} />
-      <div className="font-mono text-[11.5px] text-white/55 w-14 text-right tabular-nums">
-        {duration}
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <div className="font-mono text-[12px] text-white/55 tabular-nums">{duration}</div>
+        <div className="font-mono text-[11px] text-white/40">
+          {formatRelativeTime(session.created_at)}
+        </div>
       </div>
-      <div className="font-mono text-[11px] text-white/45 w-20 text-right hidden sm:block">
-        {formatRelativeTime(session.created_at)}
-      </div>
-      <ChevronRight
-        size={13}
-        className="text-white/30 opacity-0 group-hover:opacity-100 transition-opacity"
-      />
     </motion.div>
   );
 }
 
-function RuntimeStatusCard({
-  usage,
-  limit,
+function QuotaCard({
   loading,
+  usage,
+  stats,
 }: {
-  usage: number;
-  limit: number;
   loading: boolean;
+  usage: ApiUsage | null;
+  stats: ApiStats | null;
 }) {
-  const pct = Math.min(100, Math.max(0, limit ? (usage / limit) * 100 : 0));
+  const used = usage?.executions_used ?? stats?.total_executions_this_month ?? 0;
+  const limit = usage?.executions_limit ?? stats?.executions_limit ?? 1_000_000;
+  const pct =
+    usage?.percentage_used != null
+      ? Number(usage.percentage_used)
+      : limit
+      ? (used / limit) * 100
+      : 0;
+  const pctClamped = Math.min(100, Math.max(0, pct));
+  const over = pctClamped > 80;
+  const plan = usage?.plan || stats?.plan || "free";
+  const isFree = plan.toLowerCase() === "free";
 
   return (
-    <GlassCard padding="md" data-testid="runtime-status-card">
-      <div className="flex items-center justify-between">
-        <SectionLabel>Runtime status</SectionLabel>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-accent">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-          Operational
-        </span>
-      </div>
-
-      <div className="mt-5 space-y-4">
-        <Row
-          label="API host"
-          value={
-            <code className="font-mono text-[12px] text-white/80 truncate">
-              perceptai-production.up.railway.app
-            </code>
-          }
-        />
-        <Row
-          label="Region"
-          value={<span className="font-mono text-[12px] text-white/80">us-west-2 · edge</span>}
-        />
-        <Row
-          label="Status"
-          value={<StatusBadge status="running" label="Online" />}
-        />
-
-        <div className="pt-4 border-t border-white/[0.06]">
-          <div className="flex items-center justify-between mb-2">
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/40">
-              Execution usage
-            </span>
-            <span
-              className={cn(
-                "font-mono text-[11px] tabular-nums",
-                pct > 90 ? "text-[#FF3B3B]" : "text-white/70"
-              )}
-            >
-              {loading ? "…" : `${formatNumber(usage)} / ${formatNumber(limit)}`}
-            </span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-white/[0.05] overflow-hidden">
+    <GlassCard padding="md" data-testid="quota-card">
+      <SectionLabel>Execution quota</SectionLabel>
+      <div className="mt-4">
+        {loading ? (
+          <Skeleton className="h-2 w-full" />
+        ) : (
+          <div className="h-2 w-full rounded-full bg-white/[0.06] overflow-hidden">
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${pct}%` }}
-              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+              animate={{ width: `${pctClamped}%` }}
+              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
               className={cn(
                 "h-full rounded-full",
-                pct > 90 ? "bg-[#FF3B3B]" : "bg-accent"
+                over ? "bg-[#FF3B3B]" : "bg-accent"
               )}
             />
           </div>
-          <div className="mt-2 font-mono text-[10px] uppercase tracking-wider text-white/35">
-            {pct.toFixed(1)}% of monthly quota
-          </div>
+        )}
+        <div className="mt-2 flex items-center justify-between">
+          <span className="font-mono text-[11.5px] text-white/75 tabular-nums">
+            {loading ? "…" : `${formatNumber(used)} used`}
+          </span>
+          <span className="font-mono text-[11.5px] text-white/40 tabular-nums">
+            {loading ? "" : `${formatNumber(limit)} limit`}
+          </span>
         </div>
+      </div>
+      <div className="mt-4 flex items-center justify-between">
+        <span className="inline-flex items-center rounded-md border border-white/[0.10] bg-white/[0.03] px-2 h-6 font-mono text-[10px] uppercase tracking-[0.18em] text-white/70">
+          {plan}
+        </span>
+        {isFree && (
+          <Link
+            href="#"
+            className="text-[12px] text-accent hover:underline underline-offset-4"
+            data-testid="upgrade-link"
+          >
+            Upgrade →
+          </Link>
+        )}
       </div>
     </GlassCard>
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function QuickActionsCard() {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/40">
-        {label}
-      </span>
-      <div className="min-w-0">{value}</div>
-    </div>
+    <GlassCard padding="md" data-testid="quick-actions">
+      <SectionLabel>Quick actions</SectionLabel>
+      <div className="mt-3 space-y-1.5">
+        <ActionRow
+          href="/dashboard"
+          icon={<PlayCircle size={14} />}
+          label="Run new task"
+          testId="action-run"
+        />
+        <ActionRow
+          href="/dashboard/playbook"
+          icon={<BookOpen size={14} />}
+          label="View playbook"
+          testId="action-playbook"
+        />
+        <ActionRow
+          href="/dashboard/scheduled"
+          icon={<CalendarClock size={14} />}
+          label="Schedule task"
+          testId="action-schedule"
+        />
+      </div>
+    </GlassCard>
   );
 }
 
-function QuickAction({
+function ActionRow({
   href,
   icon,
-  title,
-  description,
+  label,
   testId,
 }: {
   href: string;
   icon: React.ReactNode;
-  title: string;
-  description: string;
-  testId: string;
+  label: string;
+  testId?: string;
 }) {
   return (
-    <Link href={href} data-testid={testId}>
-      <motion.div
-        whileHover={{ y: -2 }}
-        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-        className="group flex items-center justify-between gap-4 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-xl p-4 hover:border-accent/30 hover:bg-white/[0.04] transition-colors duration-300"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="h-10 w-10 rounded-lg border border-white/[0.08] bg-white/[0.03] flex items-center justify-center text-accent shrink-0">
-            {icon}
-          </span>
-          <div className="min-w-0">
-            <div className="text-[13.5px] text-white font-medium">{title}</div>
-            <div className="text-[12px] text-white/50 truncate">{description}</div>
-          </div>
-        </div>
-        <ArrowRight
-          size={14}
-          className="text-white/40 group-hover:text-accent group-hover:translate-x-0.5 transition-all duration-300 shrink-0"
-        />
-      </motion.div>
+    <Link
+      href={href}
+      data-testid={testId}
+      className="group flex items-center gap-3 h-10 px-3 -mx-3 rounded-lg text-[13px] text-white/80 hover:text-white hover:bg-white/[0.03] transition-colors"
+    >
+      <span className="text-white/55 group-hover:text-accent transition-colors">
+        {icon}
+      </span>
+      <span className="flex-1">{label}</span>
+      <ArrowRight
+        size={13}
+        className="text-white/30 group-hover:text-accent group-hover:translate-x-0.5 transition-all duration-200"
+      />
     </Link>
+  );
+}
+
+function ApiEndpointCard() {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(`https://${API_HOST}`);
+    } catch {
+      // best effort
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1400);
+  };
+
+  return (
+    <GlassCard padding="md" data-testid="api-endpoint-card">
+      <SectionLabel>API endpoint</SectionLabel>
+      <div className="mt-3 flex items-center gap-2">
+        <code
+          className="flex-1 min-w-0 font-mono text-[12px] text-white truncate"
+          title={API_HOST}
+        >
+          {API_HOST}
+        </code>
+        <button
+          onClick={handleCopy}
+          data-testid="copy-api-endpoint"
+          aria-label="Copy API endpoint"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/[0.10] bg-white/[0.04] hover:bg-white/[0.08] text-white/65 transition-colors shrink-0"
+        >
+          {copied ? (
+            <Check size={12} className="text-accent" strokeWidth={3} />
+          ) : (
+            <Copy size={12} />
+          )}
+        </button>
+      </div>
+      <div className="mt-3">
+        <Link
+          href="#"
+          className="text-[12px] text-accent hover:underline underline-offset-4"
+          data-testid="view-docs"
+        >
+          View docs →
+        </Link>
+      </div>
+    </GlassCard>
+  );
+}
+
+function ErrorBlock({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <GlassCard
+      padding="lg"
+      className="border-[#FF3B3B]/30 bg-[#FF3B3B]/[0.04] flex flex-col items-center text-center"
+      data-testid="overview-error"
+    >
+      <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#FF3B3B]/15 text-[#FF3B3B]">
+        <AlertTriangle size={18} />
+      </span>
+      <div className="mt-4 text-[15px] text-white font-medium">
+        Couldn&apos;t load dashboard data
+      </div>
+      <p className="mt-1.5 text-[12.5px] text-white/55 max-w-md leading-relaxed">
+        {message}
+      </p>
+      <button
+        onClick={onRetry}
+        data-testid="overview-retry"
+        className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-accent text-black px-3.5 h-9 text-[12.5px] font-medium hover:shadow-[0_0_30px_-8px_rgba(0,255,133,0.5)] transition-shadow"
+      >
+        <RefreshCw size={12} />
+        Retry
+      </button>
+    </GlassCard>
   );
 }
 

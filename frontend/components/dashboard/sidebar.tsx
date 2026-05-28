@@ -25,8 +25,8 @@ const nav = [
   { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
   { label: "Scheduled", href: "/dashboard/scheduled", icon: CalendarClock, testid: "nav-scheduled", enabled: true },
   { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
-  { label: "Analytics", href: "#", icon: BarChart3, testid: "nav-analytics", enabled: false },
-  { label: "Settings", href: "#", icon: Settings, testid: "nav-settings", enabled: false },
+  { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3, testid: "nav-analytics", enabled: true },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings, testid: "nav-settings", enabled: true },
 ];
 
 export interface SidebarUser {
