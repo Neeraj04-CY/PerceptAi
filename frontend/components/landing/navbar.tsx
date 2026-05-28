@@ -7,8 +7,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 const nav = [
-  { label: "Product", href: "#how" },
-  { label: "Compare", href: "#compare" },
+  { label: "Product", href: "#how-it-works" },
+  { label: "API", href: "#api" },
+  { label: "Use cases", href: "#use-cases" },
   { label: "Pricing", href: "#pricing" },
   { label: "Dashboard", href: "/dashboard" },
 ];
