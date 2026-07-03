@@ -60,9 +60,35 @@ def test_plan_length_clamped_to_config():
     assert len(out.steps) <= EngineConfig(groq_api_key="x").max_plan_steps
 
 
-def test_extract_not_found_becomes_empty():
-    assert _planner("NOT_FOUND").extract("price", "screen text") == ""
+def test_empty_array_means_goal_achieved():
+    out = _planner("[]").plan("x", "screen", [])
+    assert out.ok
+    assert out.steps == []
 
 
-def test_extract_returns_value():
-    assert _planner("$19.99").extract("price", "screen text") == "$19.99"
+def test_goal_context_reaches_prompt():
+    from perceptai.contracts import GoalSpec
+
+    class RecordingLLM:
+        def __init__(self):
+            self.prompt = ""
+
+        def complete_json(self, prompt, model, max_tokens=800):
+            self.prompt = prompt
+            return [{"description": "s", "action": "wait", "wait": 1}], "[]"
+
+    llm = RecordingLLM()
+    planner = Planner(EngineConfig(groq_api_key="x"), llm)
+    goal = GoalSpec(
+        intent="compare prices",
+        deliverable="a price comparison",
+        objectives=["open shop", "collect prices"],
+        required_info=["price of X"],
+        completion_criteria=["prices collected"],
+    )
+    planner.plan("compare prices", "screen", [], goal=goal, known_facts={"X (price)": "$5"})
+    assert "a price comparison" in llm.prompt
+    assert "collect prices" in llm.prompt
+    assert "Done when: prices collected" in llm.prompt
+    assert "$5" in llm.prompt  # known facts injected, marked do-not-re-collect
+    assert "return an empty array" in llm.prompt

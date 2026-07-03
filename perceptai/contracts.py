@@ -148,10 +148,50 @@ class VerificationResult:
 
 
 @dataclass
-class Finding:
+class Evidence:
+    """One piece of collected, sourced information. Evidence is the atomic
+    unit of business value — reports are assembled from it, knowledge is
+    persisted from it, completion criteria are judged against it."""
+    kind: str  # price | title | name | date | email | link | table | number | text | other
     label: str
     value: str
-    source: str = ""  # e.g. "read_screen step 3"
+    source: str = ""  # app, url or screen where it was observed
+    confidence: float = 0.0
+    collected_at: str = field(default_factory=utc_now_iso)
+
+
+@dataclass
+class GoalSpec:
+    """What the user is actually trying to achieve — drives planning,
+    verification and reporting. Produced once, before any execution."""
+    intent: str
+    deliverable: str = ""
+    output_format: str = "action_confirmation"  # report | data | action_confirmation
+    entities: list[str] = field(default_factory=list)
+    required_info: list[str] = field(default_factory=list)
+    objectives: list[str] = field(default_factory=list)
+    completion_criteria: list[str] = field(default_factory=list)
+    success_definition: str = ""
+
+    @property
+    def is_information_goal(self) -> bool:
+        return self.output_format in ("report", "data")
+
+
+@dataclass
+class TaskReport:
+    """The business deliverable. Narrative fields are LLM-composed from
+    collected evidence only; everything else is assembled deterministically."""
+    executive_summary: str = ""
+    key_findings: list[str] = field(default_factory=list)
+    evidence: list[Evidence] = field(default_factory=list)
+    confidence: float = 0.0
+    sources: list[str] = field(default_factory=list)
+    artifacts: list["Artifact"] = field(default_factory=list)
+    next_actions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return _plain(self)
 
 
 @dataclass
@@ -171,19 +211,33 @@ class Task:
 
 @dataclass
 class TaskContext:
-    """Working memory for a single task run."""
+    """Working memory for a single task run. Accumulate-only: evidence,
+    sources and notes grow during execution and are never overwritten."""
     instruction: str
+    goal: Optional[GoalSpec] = None
     facts: dict[str, str] = field(default_factory=dict)
-    extractions: list[Finding] = field(default_factory=list)
+    evidence: list[Evidence] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
-    def add_extraction(self, label: str, value: str, source: str = "") -> None:
-        finding = Finding(label=label, value=value, source=source)
-        self.extractions.append(finding)
-        self.facts[label] = value
+    def add_evidence(self, items: list[Evidence]) -> None:
+        for item in items:
+            self.evidence.append(item)
+            if item.label:
+                self.facts[item.label] = item.value
+
+    def add_source(self, source: str) -> None:
+        source = source.strip()
+        if source and source not in self.sources:
+            self.sources.append(source)
+
+    def add_note(self, note: str) -> None:
+        if note:
+            self.notes.append(note)
 
     @property
     def latest_extraction(self) -> str:
-        return self.extractions[-1].value if self.extractions else ""
+        return self.evidence[-1].value if self.evidence else ""
 
 
 @dataclass
@@ -204,7 +258,9 @@ class TaskResult:
     instruction: str
     status: TaskStatus
     summary: str = ""
-    findings: list[Finding] = field(default_factory=list)
+    goal: Optional[GoalSpec] = None
+    report: Optional[TaskReport] = None
+    findings: list[Evidence] = field(default_factory=list)
     artifacts: list[Artifact] = field(default_factory=list)
     steps: list[StepResult] = field(default_factory=list)
     verification: Optional[VerificationResult] = None

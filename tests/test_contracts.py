@@ -2,12 +2,14 @@ import json
 
 from perceptai.contracts import (
     ActionType,
-    Finding,
+    Evidence,
+    GoalSpec,
     Step,
     StepResult,
     StepStatus,
     Task,
     TaskContext,
+    TaskReport,
     TaskResult,
     TaskStatus,
     VerificationCheck,
@@ -39,8 +41,10 @@ def test_task_result_serializes_to_json():
         task_id="t1",
         instruction="do it",
         status=TaskStatus.COMPLETED,
+        goal=GoalSpec(intent="do it", output_format="data"),
+        report=TaskReport(executive_summary="did it", key_findings=["x is y"]),
         steps=[StepResult(step=step, status=StepStatus.COMPLETED, index=1)],
-        findings=[Finding(label="x", value="y")],
+        findings=[Evidence(kind="text", label="x", value="y")],
         verification=VerificationResult(
             verified=True, confidence=1.0, checks=[VerificationCheck(name="c", passed=True)]
         ),
@@ -51,16 +55,32 @@ def test_task_result_serializes_to_json():
     assert decoded["status"] == "completed"
     assert decoded["steps"][0]["step"]["action"] == "open_app"
     assert decoded["verification"]["checks"][0]["passed"] is True
+    assert decoded["report"]["executive_summary"] == "did it"
+    assert decoded["goal"]["output_format"] == "data"
 
 
-def test_task_context_extractions():
+def test_task_context_accumulates_evidence():
     ctx = TaskContext(instruction="find price")
     assert ctx.latest_extraction == ""
-    ctx.add_extraction("price", "$42", source="step 2")
-    ctx.add_extraction("name", "Acme", source="step 3")
+    ctx.add_evidence([Evidence(kind="price", label="price", value="$42", source="shop")])
+    ctx.add_evidence([Evidence(kind="name", label="name", value="Acme", source="shop")])
     assert ctx.latest_extraction == "Acme"
     assert ctx.facts["price"] == "$42"
-    assert len(ctx.extractions) == 2
+    assert len(ctx.evidence) == 2
+
+
+def test_task_context_sources_dedupe_and_accumulate():
+    ctx = TaskContext(instruction="x")
+    ctx.add_source("example.com")
+    ctx.add_source("example.com")
+    ctx.add_source("notepad")
+    assert ctx.sources == ["example.com", "notepad"]
+
+
+def test_goal_spec_information_goal():
+    assert GoalSpec(intent="x", output_format="report").is_information_goal
+    assert GoalSpec(intent="x", output_format="data").is_information_goal
+    assert not GoalSpec(intent="x", output_format="action_confirmation").is_information_goal
 
 
 def test_task_gets_unique_ids():

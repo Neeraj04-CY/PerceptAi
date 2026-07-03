@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from .config import EngineConfig
-from .contracts import PlannerOutput, Step, StepResult
+from .contracts import GoalSpec, PlannerOutput, Step, StepResult
 from .llm import LLMClient
 
 _ACTIONS = "open_app|navigate_url|focus_window|click|type|clear_type|press|wait|scroll|read_screen"
@@ -27,6 +27,8 @@ class Planner:
         completed: list[StepResult],
         open_windows: list[str] | None = None,
         source: str = "planner",
+        goal: GoalSpec | None = None,
+        known_facts: dict[str, str] | None = None,
     ) -> PlannerOutput:
         now = datetime.now()
         completed_summary = "\n".join(
@@ -36,11 +38,28 @@ class Planner:
         if open_windows:
             windows_context = "\nOpen windows: " + ", ".join(open_windows[:10])
 
+        goal_context = ""
+        if goal is not None:
+            lines = [f"Deliverable: {goal.deliverable or goal.intent}"]
+            if goal.objectives:
+                lines.append("Objectives:\n" + "\n".join(f"  {i+1}. {o}" for i, o in enumerate(goal.objectives)))
+            if goal.required_info:
+                lines.append("Information to collect (use read_screen): " + "; ".join(goal.required_info))
+            if goal.completion_criteria:
+                lines.append("Done when: " + "; ".join(goal.completion_criteria))
+            goal_context = "\n" + "\n".join(lines) + "\n"
+
+        facts_context = ""
+        if known_facts:
+            facts_context = "\nAlready known facts (do NOT re-collect these):\n" + "\n".join(
+                f"- {k}: {v[:100]}" for k, v in list(known_facts.items())[:15]
+            ) + "\n"
+
         prompt = f"""You are the PerceptAI planner: a Windows desktop automation planner.
 Current time: {now.strftime("%B %d, %Y %I:%M %p")}
 
 GOAL: {instruction}
-
+{goal_context}{facts_context}
 Already done:
 {completed_summary}
 
@@ -49,6 +68,7 @@ Currently visible on screen (OCR):
 {windows_context}
 
 Generate the NEXT steps (maximum {self._config.max_plan_steps}) toward the goal.
+If every objective is already achieved, return an empty array: []
 
 Rules:
 - Open or focus the target application BEFORE interacting with it.
@@ -82,6 +102,10 @@ Return ONLY the JSON array. No markdown. No explanation."""
             return PlannerOutput(ok=False, error="Planner returned no valid step list", raw=raw,
                                  model=self._config.planner_model)
 
+        if len(parsed) == 0:
+            # Deliberate planner signal: the goal is already achieved.
+            return PlannerOutput(steps=[], ok=True, raw=raw, model=self._config.planner_model)
+
         steps: list[Step] = []
         dropped = 0
         for item in parsed[: self._config.max_plan_steps]:
@@ -98,17 +122,3 @@ Return ONLY the JSON array. No markdown. No explanation."""
             return PlannerOutput(ok=False, error="Planner produced no executable steps", raw=raw,
                                  dropped=dropped, model=self._config.planner_model)
         return PlannerOutput(steps=steps, raw=raw, dropped=dropped, model=self._config.planner_model)
-
-    def extract(self, goal: str, screen_text: str) -> str:
-        """Extract specific information from screen text. Empty string if absent."""
-        prompt = f"""Extract specific information from screen text.
-
-What to find: {goal}
-
-Screen content:
-{screen_text}
-
-Return ONLY the extracted information, nothing else.
-If not found, return: NOT_FOUND"""
-        result = self._llm.complete_text(prompt, self._config.planner_model, max_tokens=300)
-        return "" if result.strip() == "NOT_FOUND" else result.strip()

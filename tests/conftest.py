@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
 from perceptai.config import EngineConfig
-from perceptai.contracts import ActionOutcome, HealingPlan, PlannerOutput, Step
+from perceptai.contracts import ActionOutcome, Evidence, HealingPlan, PlannerOutput, Step
 from perceptai.events import EventBus
 from perceptai.perception import Perception, TextBlock
 from perceptai.session import AgentSession
@@ -110,21 +110,33 @@ class FakeActions:
 
 
 class FakePlanner:
-    """Returns queued PlannerOutputs; empty output when exhausted."""
+    """Returns queued PlannerOutputs; not-ok output when exhausted."""
 
-    def __init__(self, plans: list[list[Step]] | None = None, extractions: dict[str, str] | None = None):
+    def __init__(self, plans: list[list[Step]] | None = None):
         self.plans = list(plans or [])
-        self.extractions = extractions or {}
         self.plan_calls = 0
 
-    def plan(self, instruction, screen_text, completed, open_windows=None, source="planner"):
+    def plan(self, instruction, screen_text, completed, open_windows=None,
+             source="planner", goal=None, known_facts=None):
         self.plan_calls += 1
         if self.plans:
             return PlannerOutput(steps=self.plans.pop(0))
         return PlannerOutput(ok=False, error="no more plans")
 
-    def extract(self, goal, screen_text):
-        return self.extractions.get(goal, "")
+
+class FakeEvidenceCollector:
+    """Returns scripted evidence per goal_info string."""
+
+    def __init__(self, extractions: dict[str, str] | None = None):
+        self.extractions = extractions or {}
+        self.calls: list[tuple[str, str]] = []
+
+    def collect(self, goal_info, screen_text, source):
+        self.calls.append((goal_info, source))
+        value = self.extractions.get(goal_info, "")
+        if not value:
+            return []
+        return [Evidence(kind="text", label=goal_info, value=value, source=source, confidence=0.9)]
 
 
 class FakeHealer:
@@ -140,9 +152,11 @@ class FakeHealer:
 
 
 class FakeMemory:
-    def __init__(self):
+    def __init__(self, knowledge: list[dict] | None = None):
         self.interfaces: list[tuple[str, list]] = []
         self.tasks: list[tuple] = []
+        self.evidence: list[tuple[str, list]] = []
+        self.knowledge = knowledge or []
 
     def remember_interface(self, app, elements):
         self.interfaces.append((app, elements))
@@ -155,6 +169,12 @@ class FakeMemory:
 
     def recall_task(self, instruction):
         return None
+
+    def remember_evidence(self, task_id, evidence):
+        self.evidence.append((task_id, list(evidence)))
+
+    def recall_knowledge(self, terms, limit=10):
+        return list(self.knowledge)
 
 
 class FakeLLM:
@@ -175,9 +195,15 @@ def fast_config(**overrides) -> EngineConfig:
 
 @pytest.fixture
 def harness(tmp_path):
-    """A fully faked AgentSession plus handles to every fake."""
+    """A fully faked AgentSession plus handles to every fake.
 
-    def build(plans=None, screens=None, windows=None, healing=None, extractions=None, config=None):
+    GoalAnalyzer and ReportBuilder are REAL instances running against FakeLLM
+    — their LLM calls fail, exercising the degrade-gracefully paths (minimal
+    goal, template report). Inject `goal_analyzer=` to script rich goals.
+    """
+
+    def build(plans=None, screens=None, windows=None, healing=None,
+              extractions=None, config=None, goal_analyzer=None, memory=None):
         cfg = config or fast_config(workspace_root=tmp_path)
         fake_windows = FakeWindows(windows)
         fakes = {
@@ -185,9 +211,10 @@ def harness(tmp_path):
             "perception": FakePerception(screens),
             "apps": FakeApps(fake_windows),
             "actions": FakeActions(),
-            "planner": FakePlanner(plans, extractions),
+            "planner": FakePlanner(plans),
             "healer": FakeHealer(healing),
-            "memory": FakeMemory(),
+            "memory": memory or FakeMemory(),
+            "evidence_collector": FakeEvidenceCollector(extractions),
         }
         events: list = []
         bus = EventBus()
@@ -196,9 +223,20 @@ def harness(tmp_path):
             cfg,
             events=bus,
             llm=FakeLLM(),
+            goal_analyzer=goal_analyzer,
             **fakes,
         )
         # Verifier is real (pure logic) and uses the fake WindowManager.
         return session, fakes, events
 
     return build
+
+
+class ScriptedGoalAnalyzer:
+    """Inject to give the runtime a rich GoalSpec."""
+
+    def __init__(self, spec):
+        self.spec = spec
+
+    def analyze(self, instruction, known_facts=""):
+        return self.spec

@@ -20,6 +20,13 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
     if event.type == EventType.TASK_STARTED:
         return {"type": "session_start", "instruction": p.get("instruction", ""), "timestamp": event.timestamp}
 
+    if event.type == EventType.GOAL_ANALYZED:
+        return {"type": "log", "message": f"Goal understood: {p.get('intent', '')}"}
+
+    if event.type == EventType.EVIDENCE_COLLECTED:
+        labels = ", ".join(p.get("labels", [])[:5])
+        return {"type": "log", "message": f"Collected {p.get('count', 0)} evidence item(s): {labels}"}
+
     if event.type == EventType.PLAN_CREATED:
         return {
             "type": "plan",
@@ -90,6 +97,8 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
             "execution_time": p.get("duration_s", 0.0),
             "total_steps": p.get("total_steps", 0),
             "verification": p.get("verification"),
+            "summary": p.get("summary", ""),
+            "report": p.get("report"),
         }
 
     if event.type == EventType.ERROR:

@@ -7,6 +7,9 @@ effects: verification observes OS state, it never changes focus.
 """
 from __future__ import annotations
 
+from typing import Optional
+
+from .config import EngineConfig
 from .contracts import (
     ActionType,
     StepResult,
@@ -18,8 +21,15 @@ from .oscontrol import WindowManager
 
 
 class Verifier:
-    def __init__(self, windows: WindowManager):
+    def __init__(
+        self,
+        windows: WindowManager,
+        llm=None,
+        config: Optional[EngineConfig] = None,
+    ):
         self._windows = windows
+        self._llm = llm
+        self._config = config
 
     def verify(self, context: TaskContext, steps: list[StepResult]) -> VerificationResult:
         checks: list[VerificationCheck] = []
@@ -95,10 +105,12 @@ class Verifier:
             checks.append(
                 VerificationCheck(
                     name="extraction_present",
-                    passed=bool(context.extractions),
-                    detail=f"{len(context.extractions)} extraction(s) captured",
+                    passed=bool(context.evidence),
+                    detail=f"{len(context.evidence)} evidence item(s) captured",
                 )
             )
+
+        checks.extend(self._judge_completion_criteria(context, steps))
 
         if not checks:
             return VerificationResult(
@@ -122,3 +134,73 @@ class Verifier:
         return VerificationResult(
             verified=passed_critical, confidence=confidence, reason=reason, checks=checks
         )
+
+    def _judge_completion_criteria(
+        self, context: TaskContext, steps: list[StepResult]
+    ) -> list[VerificationCheck]:
+        """LLM-judge the goal's completion criteria against collected evidence.
+
+        Critical only for information goals (report/data): unjudgeable action
+        criteria must not regress action-task statuses. Judge failure degrades
+        to a non-critical failed check — never raises."""
+        goal = context.goal
+        if goal is None or not goal.completion_criteria or self._llm is None or self._config is None:
+            return []
+
+        critical = goal.is_information_goal
+        evidence_block = "\n".join(
+            f"- [{e.kind}] {e.label}: {e.value} (source: {e.source or 'screen'})"
+            for e in context.evidence[:30]
+        ) or "No evidence collected."
+        actions_block = "\n".join(
+            f"- {r.step.description} [{r.step.action.value}]: {r.status.value}" for r in steps[-15:]
+        ) or "No actions executed."
+        criteria_block = "\n".join(f"{i+1}. {c}" for i, c in enumerate(goal.completion_criteria))
+
+        prompt = f"""You are a strict task auditor. Judge whether each completion criterion is satisfied.
+
+Goal: {goal.intent}
+
+Completion criteria:
+{criteria_block}
+
+Evidence collected:
+{evidence_block}
+
+Actions executed:
+{actions_block}
+
+Return ONLY valid JSON:
+[{{"criterion": 1, "met": true, "reason": "one sentence"}}]
+
+Rules:
+- Judge ONLY from the evidence and actions above. When in doubt, met=false.
+Return ONLY the JSON array."""
+
+        try:
+            parsed, _raw = self._llm.complete_json(prompt, self._config.planner_model, max_tokens=500)
+        except Exception as e:
+            return [VerificationCheck(name="criteria_judge", passed=False, critical=False,
+                                      detail=f"judge unavailable: {e}")]
+        if not isinstance(parsed, list):
+            return [VerificationCheck(name="criteria_judge", passed=False, critical=False,
+                                      detail="judge returned no valid verdicts")]
+
+        checks: list[VerificationCheck] = []
+        for verdict in parsed:
+            if not isinstance(verdict, dict):
+                continue
+            try:
+                idx = int(verdict.get("criterion", 0)) - 1
+                criterion = goal.completion_criteria[idx]
+            except (TypeError, ValueError, IndexError):
+                continue
+            checks.append(
+                VerificationCheck(
+                    name=f"criterion:{criterion[:60]}",
+                    passed=bool(verdict.get("met", False)),
+                    critical=critical,
+                    detail=str(verdict.get("reason", "")),
+                )
+            )
+        return checks

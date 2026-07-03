@@ -16,12 +16,15 @@ from .actions import ActionExecutor
 from .config import EngineConfig
 from .contracts import Task, TaskResult
 from .events import EventBus, EventType
+from .evidence import EvidenceCollector
+from .goal import GoalAnalyzer
 from .healer import Healer
 from .llm import LLMClient
 from .memory import MemoryStore
 from .oscontrol import AppLauncher, WindowManager
 from .perception import PerceptionService
 from .planner import Planner
+from .reporting import ReportBuilder
 from .verification import Verifier
 
 
@@ -40,6 +43,9 @@ class AgentSession:
         healer: Optional[Healer] = None,
         verifier: Optional[Verifier] = None,
         memory: Optional[MemoryStore] = None,
+        goal_analyzer: Optional[GoalAnalyzer] = None,
+        evidence_collector: Optional[EvidenceCollector] = None,
+        reporter: Optional[ReportBuilder] = None,
     ):
         self.config = config or EngineConfig.from_env()
         self.id = str(uuid.uuid4())
@@ -53,8 +59,11 @@ class AgentSession:
         self.actions = actions or ActionExecutor(self.config)
         self.planner = planner or Planner(self.config, self.llm)
         self.healer = healer or Healer(self.config, self.llm)
-        self.verifier = verifier or Verifier(self.windows)
+        self.verifier = verifier or Verifier(self.windows, self.llm, self.config)
         self.memory = memory or MemoryStore(self.config.memory_db_path)
+        self.goals = goal_analyzer or GoalAnalyzer(self.config, self.llm)
+        self.evidence = evidence_collector or EvidenceCollector(self.config, self.llm)
+        self.reporter = reporter or ReportBuilder(self.config, self.llm)
 
     def emit(self, type: EventType, task: Task, **payload) -> None:
         self.events.emit(type, session_id=self.id, task_id=task.id, **payload)

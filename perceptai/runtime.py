@@ -51,6 +51,8 @@ class ExecutionEngine:
 
         self._s.emit(EventType.TASK_STARTED, task, instruction=task.instruction)
 
+        self._understand_goal(task, context)
+
         try:
             initial = self._plan(task, context, executed, state, source="planner")
         except Exception as e:
@@ -67,7 +69,14 @@ class ExecutionEngine:
         )
 
         queue = deque(initial)
-        while queue and state.steps_executed < self._config.max_steps:
+        while state.steps_executed < self._config.max_steps:
+            if not queue:
+                continuation = self._continue_toward_goal(task, context, executed, state)
+                if not continuation:
+                    break
+                queue = deque(continuation)
+                continue
+
             step = queue.popleft()
             result = self._run_step(task, step, context, state, executed)
 
@@ -96,6 +105,48 @@ class ExecutionEngine:
 
         return self._finish(task, context, state, executed, errors=errors, started=start)
 
+    # ------------------------------------------------------- understanding
+
+    def _understand_goal(self, task: Task, context: TaskContext) -> None:
+        """Analyze the goal and seed working memory with recalled knowledge.
+        Failure degrades to a minimal goal; execution is never blocked."""
+        try:
+            goal = self._s.goals.analyze(task.instruction)
+        except Exception:
+            from .contracts import GoalSpec
+            goal = GoalSpec(intent=task.instruction, objectives=[task.instruction])
+        context.goal = goal
+
+        try:
+            recalled = self._s.memory.recall_knowledge(goal.entities + goal.required_info)
+            for row in recalled:
+                key = f"{row['entity']} ({row['attribute']})"
+                if key not in context.facts:
+                    context.facts[key] = str(row["value"])
+                    context.add_note(f"recalled from memory: {key} = {row['value']}")
+        except Exception:
+            pass
+
+        self._s.emit(
+            EventType.GOAL_ANALYZED, task,
+            intent=goal.intent, deliverable=goal.deliverable, output_format=goal.output_format,
+            entities=goal.entities, objectives=goal.objectives,
+            completion_criteria=goal.completion_criteria,
+            recalled_facts=len(context.notes),
+        )
+
+    def _continue_toward_goal(self, task: Task, context: TaskContext,
+                              executed: list[StepResult], state: ExecutionState) -> Optional[list[Step]]:
+        """The plan queue is empty. If the goal defines completion criteria,
+        ask the planner whether more work is needed ([] = goal achieved).
+        Bounded by the existing replan budget."""
+        goal = context.goal
+        if goal is None or not goal.completion_criteria:
+            return None
+        if not executed:  # nothing was ever executed; don't loop on an empty task
+            return None
+        return self._replan(task, context, executed, state, reason="checking goal completion")
+
     # ------------------------------------------------------------ planning
 
     def _plan(self, task: Task, context: TaskContext, executed: list[StepResult],
@@ -106,7 +157,10 @@ class ExecutionEngine:
             windows = self._s.windows.list_windows()
         except Exception:
             windows = []
-        output = self._s.planner.plan(task.instruction, perception.screen_text, executed, windows, source=source)
+        output = self._s.planner.plan(
+            task.instruction, perception.screen_text, executed, windows,
+            source=source, goal=context.goal, known_facts=context.facts,
+        )
         return output.steps if output.ok else []
 
     def _replan(self, task: Task, context: TaskContext, executed: list[StepResult],
@@ -160,6 +214,12 @@ class ExecutionEngine:
             status=result.status.value, duration_s=result.duration_s,
             error=result.error, data=result.data, source=step.source,
         )
+        if step.action == ActionType.READ_SCREEN and result.data.get("evidence_count"):
+            self._s.emit(
+                EventType.EVIDENCE_COLLECTED, task,
+                count=result.data["evidence_count"],
+                labels=result.data.get("evidence_labels", []),
+            )
         return result
 
     def _dispatch(self, step: Step, context: TaskContext, state: ExecutionState) -> ActionOutcome:
@@ -173,6 +233,7 @@ class ExecutionEngine:
             if outcome.ok:
                 state.current_app = app
                 state.current_window = app
+                context.add_source(app)
                 self._s.windows.focus(app)  # best effort
             return outcome
 
@@ -183,6 +244,7 @@ class ExecutionEngine:
             outcome = self._s.apps.navigate(url)
             if outcome.ok:
                 state.browser_opened = True
+                context.add_source(url)
                 browser = str(outcome.data.get("browser", ""))
                 if browser and browser != "default":
                     state.current_app = browser
@@ -245,11 +307,16 @@ class ExecutionEngine:
             time.sleep(1.0)
             perception = self._s.perception.perceive_fast(force_refresh=True)
             self._last_perception = perception
-            goal = str(params.get("find") or context.instruction)
-            extracted = self._s.planner.extract(goal, perception.screen_text)
-            if extracted:
-                context.add_extraction(goal, extracted, source=f"read_screen step")
-            return ActionOutcome(ok=True, data={"extracted": extracted})
+            goal_info = str(params.get("find") or context.instruction)
+            source = context.sources[-1] if context.sources else (state.current_window or "screen")
+            items = self._s.evidence.collect(goal_info, perception.screen_text, source)
+            context.add_evidence(items)
+            extracted = "; ".join(i.value for i in items)
+            return ActionOutcome(
+                ok=True,
+                data={"extracted": extracted, "evidence_count": len(items),
+                      "evidence_labels": [i.label for i in items]},
+            )
 
         return ActionOutcome(ok=False, error=f"Unknown action: {action}")
 
@@ -391,22 +458,46 @@ class ExecutionEngine:
         if latest_shot is not None:
             artifacts.append(Artifact(kind="screenshot", path=str(latest_shot), description="final screen state"))
 
+        goal = context.goal
+        if goal is None:
+            from .contracts import GoalSpec
+            goal = GoalSpec(intent=task.instruction, objectives=[task.instruction])
+
+        try:
+            report = self._s.reporter.build(
+                goal, context, status, verification, artifacts,
+                actions_summary=self._actions_summary(executed),
+            )
+        except Exception:
+            from .contracts import TaskReport
+            report = TaskReport(
+                executive_summary=f"Task {status.value}: {task.instruction}. {verification.reason}.",
+                evidence=list(context.evidence),
+                confidence=verification.confidence,
+                sources=list(context.sources),
+                artifacts=artifacts,
+            )
+
         result = TaskResult(
             task_id=task.id,
             instruction=task.instruction,
             status=status,
-            summary=self._summarize(task, context, executed, verification, status),
-            findings=list(context.extractions),
+            summary=report.executive_summary,
+            goal=goal,
+            report=report,
+            findings=list(context.evidence),
             artifacts=artifacts,
             steps=executed,
             verification=verification,
             duration_s=duration,
             errors=errors,
-            confidence=verification.confidence,
+            confidence=report.confidence,
             metadata={
                 "replans": state.replans,
                 "healings": state.healings,
                 "llm_calls": state.llm_calls,
+                "evidence_count": len(context.evidence),
+                "sources": list(context.sources),
             },
         )
 
@@ -417,6 +508,7 @@ class ExecutionEngine:
                 status == TaskStatus.COMPLETED,
                 duration,
             )
+            self._s.memory.remember_evidence(task.id, context.evidence)
         except Exception:
             pass
 
@@ -424,22 +516,28 @@ class ExecutionEngine:
             EventType.TASK_COMPLETED, task,
             status=status.value, duration_s=duration, total_steps=len(executed),
             verification=verification.to_dict(), summary=result.summary,
+            report=report.to_dict(),
         )
         return result
 
     @staticmethod
-    def _summarize(task: Task, context: TaskContext, executed: list[StepResult],
-                   verification, status: TaskStatus) -> str:
-        parts = [f"Task {status.value}: {task.instruction}."]
+    def _actions_summary(executed: list[StepResult]) -> str:
         apps = {
             str(r.step.params.get("app", "")).strip()
             for r in executed
             if r.step.action == ActionType.OPEN_APP and r.ok and r.step.params.get("app")
         }
+        urls = {
+            str(r.step.params.get("url", "")).strip()
+            for r in executed
+            if r.step.action == ActionType.NAVIGATE_URL and r.ok and r.step.params.get("url")
+        }
+        typed = sum(1 for r in executed if r.step.action in (ActionType.TYPE, ActionType.CLEAR_TYPE) and r.ok)
+        parts = [f"{len(executed)} steps executed"]
         if apps:
-            parts.append(f"Opened: {', '.join(sorted(apps))}.")
-        if context.extractions:
-            values = "; ".join(f.value[:100] for f in context.extractions[:3])
-            parts.append(f"Extracted: {values}.")
-        parts.append(verification.reason + ".")
-        return " ".join(parts)
+            parts.append(f"apps opened: {', '.join(sorted(apps))}")
+        if urls:
+            parts.append(f"pages visited: {', '.join(sorted(urls))}")
+        if typed:
+            parts.append(f"{typed} text input(s)")
+        return "; ".join(parts)

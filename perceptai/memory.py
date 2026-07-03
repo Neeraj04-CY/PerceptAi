@@ -47,6 +47,17 @@ class MemoryStore:
                     execution_time REAL,
                     created_at REAL
                 );
+                CREATE TABLE IF NOT EXISTS knowledge (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entity TEXT,
+                    attribute TEXT,
+                    value TEXT,
+                    source TEXT,
+                    confidence REAL,
+                    task_id TEXT,
+                    created_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_entity ON knowledge(entity);
                 """
             )
             conn.commit()
@@ -130,6 +141,56 @@ class MemoryStore:
                     time.time(),
                 ),
             )
+
+    def remember_evidence(self, task_id: str, evidence: list) -> None:
+        """Persist collected Evidence as reusable knowledge (entity-attribute-value)."""
+        if not evidence:
+            return
+        with self._connect() as conn:
+            for item in evidence:
+                if not getattr(item, "value", ""):
+                    continue
+                conn.execute(
+                    """INSERT INTO knowledge
+                       (entity, attribute, value, source, confidence, task_id, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        item.label,
+                        item.kind,
+                        item.value,
+                        item.source,
+                        float(item.confidence),
+                        task_id,
+                        time.time(),
+                    ),
+                )
+
+    def recall_knowledge(self, terms: list[str], limit: int = 10) -> list[dict]:
+        """Recall knowledge rows whose entity or value matches any term.
+        Most recent first; naive term matching by design (embeddings later)."""
+        terms = [t.strip() for t in terms if t and len(t.strip()) >= 3]
+        if not terms:
+            return []
+        clauses = " OR ".join("entity LIKE ? OR value LIKE ?" for _ in terms)
+        params: list = []
+        for term in terms:
+            like = f"%{term}%"
+            params.extend([like, like])
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT entity, attribute, value, source, confidence, created_at
+                    FROM knowledge WHERE {clauses}
+                    ORDER BY created_at DESC LIMIT ?""",
+                params,
+            ).fetchall()
+        return [
+            {
+                "entity": r[0], "attribute": r[1], "value": r[2],
+                "source": r[3], "confidence": r[4], "created_at": r[5],
+            }
+            for r in rows
+        ]
 
     def recall_task(self, instruction: str) -> Optional[dict]:
         instruction_hash = hashlib.md5(instruction.lower().encode()).hexdigest()

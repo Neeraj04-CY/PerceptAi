@@ -17,6 +17,8 @@ from .contracts import _plain, utc_now_iso
 
 class EventType(str, Enum):
     TASK_STARTED = "task_started"
+    GOAL_ANALYZED = "goal_analyzed"
+    EVIDENCE_COLLECTED = "evidence_collected"
     PLAN_CREATED = "plan_created"
     REPLANNED = "replanned"
     STEP_STARTED = "step_started"
