@@ -9,12 +9,52 @@ export interface ApiSessionStep {
   [key: string]: unknown;
 }
 
+export interface ApiEvidence {
+  kind: string;
+  label: string;
+  value: string;
+  source: string;
+  confidence: number;
+  collected_at?: string;
+}
+
+export interface ApiTaskReport {
+  executive_summary: string;
+  key_findings: string[];
+  evidence: ApiEvidence[];
+  confidence: number;
+  sources: string[];
+  artifacts: Array<{ kind: string; path: string; description: string }>;
+  next_actions: string[];
+}
+
+export interface ApiTaskResult {
+  status: string;
+  summary?: string;
+  report?: ApiTaskReport | null;
+  goal?: {
+    intent: string;
+    deliverable: string;
+    output_format: string;
+    objectives: string[];
+    completion_criteria: string[];
+  } | null;
+  verification?: {
+    verified: boolean;
+    confidence: number;
+    reason: string;
+    checks: Array<{ name: string; passed: boolean; critical: boolean; detail: string }>;
+  } | null;
+  [key: string]: unknown;
+}
+
 export interface ApiSession {
   id: string;
   instruction: string;
-  status: "completed" | "failed" | "running";
+  status: "completed" | "unverified" | "failed" | "running";
   execution_time: number | null;
   steps: ApiSessionStep[];
+  result?: ApiTaskResult | null;
   created_at: string;
 }
 

@@ -56,6 +56,7 @@ class ExecuteResponse(BaseModel):
     confidence: Optional[float] = None
     verification: Optional[Any] = None
     findings: List[Any] = []
+    report: Optional[Any] = None
     created_at: datetime
 
 # Session History

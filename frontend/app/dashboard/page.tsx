@@ -272,11 +272,21 @@ export default function RunTaskPage() {
                 duration: `${event.execution_time}s`,
                 stepsTotal: event.total_steps,
               }));
-              setLogs((prev) => [...prev, {
-                ts: formatTime(new Date()),
-                level: "ok",
-                msg: `━━ ${event.status} · ${event.execution_time}s · ${event.total_steps} steps ━━`,
-              }]);
+              setLogs((prev) => {
+                const next = [...prev, {
+                  ts: formatTime(new Date()),
+                  level: "ok" as const,
+                  msg: `━━ ${event.status} · ${event.execution_time}s · ${event.total_steps} steps ━━`,
+                }];
+                if (event.summary) {
+                  next.push({
+                    ts: formatTime(new Date()),
+                    level: "ok" as const,
+                    msg: `Result: ${event.summary}`,
+                  });
+                }
+                return next;
+              });
               break;
 
             case "error":

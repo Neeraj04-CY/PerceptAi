@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-type SessionStatus = "completed" | "failed" | "running";
+type SessionStatus = "completed" | "unverified" | "failed" | "running";
 
 const map: Record<SessionStatus, { label: string; dot: string; bg: string; text: string }> = {
   completed: {
@@ -8,6 +8,12 @@ const map: Record<SessionStatus, { label: string; dot: string; bg: string; text:
     dot: "bg-accent",
     bg: "bg-accent/[0.08]",
     text: "text-accent",
+  },
+  unverified: {
+    label: "Unverified",
+    dot: "bg-[#E8C44A]",
+    bg: "bg-[#E8C44A]/10",
+    text: "text-[#E8C44A]",
   },
   failed: {
     label: "Failed",

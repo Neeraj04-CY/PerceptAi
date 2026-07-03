@@ -152,6 +152,10 @@ async def execute(
         summary=result.summary,
         confidence=result.confidence,
         verification=result.verification.to_dict() if result.verification else None,
-        findings=[{"label": f.label, "value": f.value, "source": f.source} for f in result.findings],
+        findings=[
+            {"kind": f.kind, "label": f.label, "value": f.value, "source": f.source, "confidence": f.confidence}
+            for f in result.findings
+        ],
+        report=result.report.to_dict() if result.report else None,
         created_at=datetime.now(timezone.utc)
     )

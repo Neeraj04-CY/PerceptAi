@@ -9,7 +9,12 @@
       "Bash(./.venv311/Scripts/python.exe -m pytest tests/ -q)",
       "Bash(./.venv311/Scripts/python.exe -m pip install pytest -q)",
       "Bash(./.venv311/Scripts/python.exe -m py_compile api/main.py api/routes/execute_routes.py api/models.py api/executor.py examples/natural_language_demo.py evals/harness.py evals/checkers.py)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(npx next *)",
+      "Bash(./.venv311/Scripts/python.exe -m py_compile api/main.py api/routes/execute_routes.py api/models.py api/executor.py evals/checkers.py evals/harness.py)",
+      "Bash(./.venv311/Scripts/python.exe -c ' *)"
     ]
   }
 }

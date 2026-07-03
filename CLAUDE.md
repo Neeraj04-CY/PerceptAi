@@ -54,11 +54,14 @@ Module map (dependencies flow downward, no cycles):
 - `config.py` — EngineConfig: all budgets, models, settle delays, paths. Every agentic loop must be budgeted (max_steps, max_replans, max_healing_attempts, find_retries).
 - `llm.py` — single Groq wrapper; JSON fence-stripping/permissive parsing lives ONLY here. Malformed LLM replies degrade, never raise, in the execution path.
 - `perception.py` / `actions.py` / `oscontrol.py` — services. Actions are dumb primitives (no focus logic). App launching is generic: PATH → App Paths registry → Win+R; no hardcoded exe paths. Screenshots go to the session workspace (`%TEMP%/perceptai/<id>/`).
-- `planner.py` — incremental: plans ≤`max_plan_steps` from the live screen; re-invoked after every launch/navigation and after unhealed failures. Plans are hypotheses, not scripts.
-- `healer.py` / `verification.py` — LLM failure diagnosis; verification derives checks from executed steps and only observes (never focuses/changes) OS state.
-- `memory.py` — MemoryStore (SQLite at `~/.perceptai/memory.db`). Write hooks are live; the recall path exists but isn't wired into planning yet (future chapter).
+- `planner.py` — incremental: plans ≤`max_plan_steps` from the live screen; re-invoked after every launch/navigation and after unhealed failures. Goal-aware (objectives, known facts); returns `[]` to signal "goal achieved". Plans are hypotheses, not scripts.
+- `goal.py` / `evidence.py` / `reporting.py` — the cognitive layer. GoalAnalyzer turns the instruction into a `GoalSpec` (deliverable, entities, objectives, completion criteria) BEFORE planning; EvidenceCollector turns screen observations into typed, sourced `Evidence`; ReportBuilder assembles the `TaskReport` deliverable, LLM-composing narrative **from collected evidence only** (grounded — never invents facts). All three degrade gracefully on LLM failure; execution is never blocked by cognition.
+- `healer.py` / `verification.py` — LLM failure diagnosis; verification derives checks from executed steps + LLM-judges the goal's completion criteria against evidence (critical for report/data goals, advisory for action goals). Observe-only: never focuses/changes OS state.
+- `memory.py` — MemoryStore (SQLite at `~/.perceptai/memory.db`): interface maps, task patterns, and the `knowledge` table (evidence persisted as entity-attribute-value, recalled by goal entities to seed future tasks).
 
-Execution loop semantics: perceive → plan → per step (ensure focus → act → emit events) → on failure: heal (bounded) → if unhealed: replan from live screen → if that fails: stop with FAILED. After open_app/navigate_url: settle, then replan. Final status: FAILED (a step failed), COMPLETED (verification passed), or UNVERIFIED (steps ok, verification couldn't confirm).
+Execution loop semantics: understand goal (+ recall knowledge) → perceive → plan → per step (ensure focus → act → emit events) → on failure: heal (bounded) → if unhealed: replan from live screen → if that fails: stop with FAILED. After open_app/navigate_url: settle, then replan. When the queue empties and the goal has completion criteria: continuation replan until the planner returns `[]` (goal achieved) or budgets exhaust. Final status: FAILED (a step failed), COMPLETED (verification passed), or UNVERIFIED (steps ok, verification couldn't confirm).
+
+Working memory: `TaskContext` is accumulate-only (evidence, sources, notes, facts) — never overwrite, always append. `TaskResult.report` is the business deliverable (executive summary, key findings, evidence, confidence, sources, next actions); the dashboard renders it from `sessions.result`.
 
 ### API layer (api/)
 

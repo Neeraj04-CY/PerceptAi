@@ -81,11 +81,30 @@ def check_finding_contains(spec: dict, result_dict: dict | None) -> CheckOutcome
     )
 
 
+def check_report_field(spec: dict, result_dict: dict | None) -> CheckOutcome:
+    """Report-quality check: a report field must be non-empty (and optionally
+    contain expected text). Measures the business deliverable, not the steps."""
+    field_name = spec["field"]
+    report = (result_dict or {}).get("report") or {}
+    value = report.get(field_name)
+    present = bool(value) and (bool(value) if not isinstance(value, (list, str)) else len(value) > 0)
+    expected = spec.get("contains")
+    if present and expected:
+        text = value if isinstance(value, str) else " ".join(str(v) for v in value)
+        present = _resolve_template(expected).lower() in text.lower()
+    return CheckOutcome(
+        name=f"report_field:{field_name}",
+        passed=present,
+        detail="present" if present else f"report field '{field_name}' missing or empty",
+    )
+
+
 CHECKERS: dict[str, Callable] = {
     "window_exists": lambda spec, result: check_window_exists(spec),
     "screen_contains": lambda spec, result: check_screen_contains(spec),
     "file_contains": lambda spec, result: check_file_contains(spec),
     "finding_contains": check_finding_contains,
+    "report_field": check_report_field,
 }
 
 

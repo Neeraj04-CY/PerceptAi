@@ -16,6 +16,7 @@ import {
 import { getSession, type ApiSession } from "@/lib/api";
 import { SessionStatusPill } from "@/components/dashboard/sessions/session-status-pill";
 import { MetricCard } from "./metric-card";
+import { ReportCard } from "./report-card";
 import { StepTimeline } from "./step-timeline";
 import { RuntimeLogs } from "./runtime-logs";
 import { CopyToast } from "./copy-toast";
@@ -200,6 +201,9 @@ function Loaded({
           }
         />
       </div>
+
+      {/* The deliverable — leads everything else */}
+      {session.result?.report && <ReportCard report={session.result.report} />}
 
       {/* Timeline */}
       <StepTimeline steps={session.steps || []} />
