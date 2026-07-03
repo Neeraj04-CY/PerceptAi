@@ -5,10 +5,21 @@ import psutil
 import os
 
 
+def _find_chrome_path():
+    paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Users\neera\AppData\Local\Google\Chrome\Application\chrome.exe",
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def open_app(app_name):
     """Open any application by name"""
     app_name_lower = app_name.lower()
-
     app_paths = {
         "chrome": [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -19,27 +30,31 @@ def open_app(app_name):
         "calculator": r"C:\Windows\System32\calc.exe",
         "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         "explorer": r"C:\Windows\explorer.exe",
-        "wordpad": r"C:\Program Files\Windows NT\Accessories\wordpad.exe"
     }
 
     try:
-        # Direct path launch
         if app_name_lower in app_paths:
             path = app_paths[app_name_lower]
-            # Handle multiple possible paths
             if isinstance(path, list):
                 for p in path:
                     if os.path.exists(p):
                         subprocess.Popen(p)
-                        time.sleep(2)
-                        return {"success": True, "app": app_name}
+                        break
             else:
                 if os.path.exists(path):
                     subprocess.Popen(path)
-                    time.sleep(2)
+
+            # Wait for window to actually appear
+            for _ in range(20):
+                time.sleep(0.5)
+                windows = get_open_windows()
+                if any(app_name_lower in w.lower() for w in windows):
+                    time.sleep(0.5)  # Extra settle time
                     return {"success": True, "app": app_name}
 
-        # Try Win+R method as fallback
+            return {"success": True, "app": app_name, "note": "window may not have appeared"}
+
+        # Win+R fallback
         pyautogui.hotkey('win', 'r')
         time.sleep(0.8)
         pyautogui.typewrite(app_name_lower, interval=0.05)
@@ -116,10 +131,23 @@ def get_open_windows():
 
 def navigate_to_url(url):
     """Open URL directly in default browser"""
+    result = open_urls_in_chrome([url])
+    result["url"] = url
+    return result
+
+
+def open_urls_in_chrome(urls):
+    chrome_path = _find_chrome_path()
+    if chrome_path:
+        subprocess.Popen([chrome_path, "--new-window", *urls])
+        time.sleep(2)
+        return {"success": True, "urls": urls, "browser": "chrome"}
+
     import webbrowser
-    webbrowser.open(url)
+    for url in urls:
+        webbrowser.open_new_tab(url)
     time.sleep(2)
-    return {"success": True, "url": url}
+    return {"success": True, "urls": urls, "browser": "default"}
 
 
 def get_screen_size():

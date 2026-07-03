@@ -12,6 +12,8 @@ class PerceptAgent:
         self.task = task_description
         self.steps_taken = []
         self.max_retries = 3
+        self.last_app = None
+        self.last_window = None
 
     def perceive_and_find(self, query):
         """
@@ -56,6 +58,20 @@ class PerceptAgent:
         found = find_element(result, expected_text)
         return found is not None, result
 
+    def ensure_focus(self, step):
+        target = (
+            step.get("window")
+            or step.get("app")
+            or self.last_window
+            or self.last_app
+        )
+        if not target:
+            return None
+        result = focus_window(target)
+        if result and result.get("success"):
+            self.last_window = target
+        return result
+
     def execute_step(self, step):
         action = step["action"]
 
@@ -63,25 +79,35 @@ class PerceptAgent:
             app = step.get("app", "")
             print(f"    Opening {app}...")
             result = open_app(app)
-            time.sleep(2.5)
+            if app:
+                self.last_app = app
+                self.last_window = app
+                self.ensure_focus({"window": app})
+            time.sleep(0.8)
             return result
 
         elif action == "navigate_url":
             url = step.get("url", "")
             print(f"    Navigating to {url}...")
             result = navigate_to_url(url)
-            time.sleep(2.5)
+            self.last_app = "chrome"
+            self.last_window = "chrome"
+            self.ensure_focus({"window": "chrome"})
+            time.sleep(1.2)
             return result
 
         elif action == "focus_window":
             window = step.get("window", "")
             print(f"    Focusing: {window}...")
             result = focus_window(window)
-            time.sleep(0.8)
+            if window:
+                self.last_window = window
+            time.sleep(0.3)
             return result
 
         elif action == "click":
             query = step.get("find", "")
+            self.ensure_focus(step)
             element, perception = self.perceive_and_find(query)
 
             if element:
@@ -89,7 +115,7 @@ class PerceptAgent:
                 conf = element.get("confidence", 0)
                 print(f"    Clicking '{query}' at x:{pos['x']}, y:{pos['y']} (conf:{conf})")
                 result = click(pos["x"], pos["y"])
-                time.sleep(0.5)
+                time.sleep(0.2)
                 return result
             else:
                 # Smart fallback — click center of screen
@@ -100,17 +126,28 @@ class PerceptAgent:
 
         elif action == "type":
             text = step.get("text", "")
-            print(f"    Typing: '{text}'")
-            return type_text(text)
+            target = (
+                step.get("app")
+                or step.get("window")
+                or self.last_app
+                or self.last_window
+                or ""
+            )
+            print(f"    Typing into '{target}': '{text}'")
+            self.ensure_focus(step)
+            time.sleep(0.2)
+            return type_text(text, target_window=target)
 
         elif action == "clear_type":
             text = step.get("text", "")
             print(f"    Clear and type: '{text}'")
+            self.ensure_focus(step)
             return clear_and_type(text)
 
         elif action == "press":
             key = step.get("key", "")
             print(f"    Pressing: '{key}'")
+            self.ensure_focus(step)
             if "+" in key:
                 pyautogui.hotkey(*key.split("+"))
             else:
@@ -232,7 +269,7 @@ class PerceptAgent:
                 except Exception:
                     pass
 
-            wait_time = float(step.get("wait", 0.5))
+            wait_time = float(step.get("wait", 0.2))
             _time.sleep(wait_time)
             step_index += 1
 

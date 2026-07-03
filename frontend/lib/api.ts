@@ -1,0 +1,182 @@
+export interface ApiSessionStep {
+  step_number: number;
+  description: string;
+  action: string;
+  status: "completed" | "failed";
+  result?: { success: boolean; [key: string]: unknown };
+  timestamp: string;
+  duration: number;
+  [key: string]: unknown;
+}
+
+export interface ApiSession {
+  id: string;
+  instruction: string;
+  status: "completed" | "failed" | "running";
+  execution_time: number | null;
+  steps: ApiSessionStep[];
+  created_at: string;
+}
+
+export interface DashboardStats {
+  total_sessions: number;
+  successful_sessions: number;
+  failed_sessions: number;
+  total_executions_this_month: number;
+  executions_limit: number;
+  recent_sessions: Array<{
+    id: string;
+    instruction: string;
+    status: string;
+    execution_time: number | null;
+    steps_count: number;
+    created_at: string;
+  }>;
+  plan: string;
+}
+
+export interface UsageStats {
+  month: string;
+  executions_used: number;
+  executions_limit: number;
+  plan: string;
+  percentage_used: number;
+}
+
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "https://perceptai-production.up.railway.app").replace(/\/$/, "");
+const API_V1 = `${API_BASE}/api/v1`;
+const FULL_KEY_STORAGE_PREFIX = "perceptai_full_key_";
+const ACTIVE_KEY_STORAGE_KEY = "perceptai_active_key";
+
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem("perceptai_token");
+}
+
+export async function getFullKey(): Promise<string> {
+  if (typeof window === "undefined") return "";
+
+  const active = window.localStorage.getItem(ACTIVE_KEY_STORAGE_KEY);
+  if (active && active.startsWith("pk_")) return active;
+
+  for (let i = 0; i < window.localStorage.length; i += 1) {
+    const k = window.localStorage.key(i);
+    if (k?.startsWith(FULL_KEY_STORAGE_PREFIX)) {
+      const val = window.localStorage.getItem(k);
+      if (val) return val;
+    }
+  }
+
+  return "";
+}
+
+type AuthResponse = {
+  access_token: string;
+  token_type?: string;
+  [key: string]: unknown;
+};
+
+async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${API_V1}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "omit",
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || `Request failed (${res.status})`);
+  }
+
+  return (await res.json()) as T;
+}
+
+async function getJsonAuth<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const token = getToken();
+  if (!token) {
+    throw new Error("Unauthorized");
+  }
+
+  const res = await fetch(`${API_V1}${path}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    cache: "no-store",
+    signal,
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Unauthorized");
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || `Request failed (${res.status})`);
+  }
+
+  return (await res.json()) as T;
+}
+
+export async function signIn(email: string, password: string): Promise<AuthResponse> {
+  return postJson<AuthResponse>("/auth/signin", { email, password });
+}
+
+export async function signUp(email: string, password: string): Promise<AuthResponse> {
+  return postJson<AuthResponse>("/auth/signup", { email, password });
+}
+
+export async function getSessions(signal?: AbortSignal): Promise<ApiSession[]> {
+  const token = getToken();
+  const res = await fetch(`${API_V1}/dashboard/sessions`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to load sessions (${res.status})`);
+  }
+
+  const data = (await res.json()) as ApiSession[] | { sessions: ApiSession[] };
+  return Array.isArray(data) ? data : data.sessions || [];
+}
+
+export async function getSession(
+  id: string,
+  signal?: AbortSignal
+): Promise<ApiSession> {
+  const token = getToken();
+  const res = await fetch(
+    `${API_V1}/dashboard/sessions/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      cache: "no-store",
+      signal,
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to load session (${res.status})`);
+  }
+
+  return (await res.json()) as ApiSession;
+}
+
+export async function getDashboardStats(signal?: AbortSignal): Promise<DashboardStats> {
+  return getJsonAuth<DashboardStats>("/dashboard/stats", signal);
+}
+
+export async function getUsage(signal?: AbortSignal): Promise<UsageStats> {
+  return getJsonAuth<UsageStats>("/dashboard/usage", signal);
+}

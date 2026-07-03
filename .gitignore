@@ -7,3 +7,9 @@ temp_screen.png
 examples/temp_screen.png
 perceptai_memory.db
 .vscode/
+frontend/.next/
+frontend/node_modules/
+api/__pycache__/
+api/.env
+api/perceptai_memory.db
+.venv311/

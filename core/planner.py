@@ -54,7 +54,9 @@ Available actions:
 
 Rules:
 - Always open or focus the right app FIRST before clicking anything
+- Before typing or pressing keys, add a focus_window step for the target app
 - Use navigate_url to go to websites instead of clicking address bar
+- If you open a specific browser, keep using that same browser for navigate_url
 - Keep steps simple and atomic
 - Maximum 10 steps
 

@@ -17,13 +17,22 @@ def click(x, y, double=False):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def type_text(text, use_clipboard=True):
+def type_text(text, use_clipboard=True, target_window=""):
     """
     Types text reliably.
     Uses clipboard paste for special characters — works on everything.
+    When a target window is known, try to re-focus it right before pasting.
     """
     try:
         if use_clipboard:
+            if target_window:
+                try:
+                    from core.os_control import focus_window
+                    focus_window(target_window)
+                    time.sleep(0.2)
+                except Exception:
+                    pass
+
             # Save current clipboard
             try:
                 previous = pyperclip.paste()
@@ -32,9 +41,9 @@ def type_text(text, use_clipboard=True):
             
             # Paste via clipboard — handles ALL characters
             pyperclip.copy(text)
-            time.sleep(0.1)
+            time.sleep(0.15)
             pyautogui.hotkey('ctrl', 'v')
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             return {"success": True, "action": "type", "text": text, "method": "clipboard"}
         else:
