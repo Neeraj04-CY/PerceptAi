@@ -6,94 +6,94 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 PerceptAI is a screen-driven desktop automation agent for **Windows only**: plain-English instruction → screen perception (EasyOCR + Groq vision) → LLM planning (Groq llama-3.3-70b) → real mouse/keyboard actions (PyAutoGUI + ctypes user32). No DOM access — it works on pixels, so it automates any desktop app. A SaaS layer (FastAPI + Supabase + Next.js dashboard) wraps the engine.
 
-Running the engine or API locally **takes over the real mouse/keyboard and manipulates live windows**. Don't casually run demos or `execute_task` to "test" — it will click on the user's actual screen. PyAutoGUI failsafe: slam cursor to a corner to abort.
+Running the engine or API locally **takes over the real mouse/keyboard and manipulates live windows**. Don't casually run demos, `session.run(...)`, or the eval harness to "test" — they click on the user's actual screen. PyAutoGUI failsafe: slam cursor to a corner to abort. Unit tests (`tests/`) use injected fakes and are always safe to run.
 
 ## Product philosophy
 
-- **Pixels, not DOM.** Browser-Use covers websites; PerceptAI targets the ~75% of work in desktop apps, legacy software, and tools with no API. Anything visible on screen is automatable. Never add app-specific integrations that bypass perception — the generality is the product.
-- **Plain English in, actions out.** The user gives one instruction; planning, element-finding, and recovery are the engine's job, not the user's.
-- **Latency is a feature.** OCR-only perception (`perceive_fast`) is the default; the expensive vision-LLM call is a fallback. Downscaled screenshots, cached perception, lazy-loaded models. Prefer the cheap path first everywhere.
-- **Self-healing over failing.** When a step fails, diagnose and retry rather than abort. An automation run should degrade, not crash.
+- **Pixels, not DOM.** Browser-Use covers websites; PerceptAI targets the ~75% of work in desktop apps, legacy software, and tools with no API. Never add app-specific integrations or special cases (no hardcoded Notepad/Chrome logic) — the generality is the product.
+- **Plain English in, structured outcomes out.** Users receive `TaskResult` (status, summary, findings, verification, confidence) — execution logs are for developers.
+- **Latency is a feature.** OCR-only perception (`perceive_fast`) is the default; the vision-LLM call is an escalation. Prefer the cheap path first everywhere.
+- **Self-healing over failing, honest failure over blind action.** Failed steps are diagnosed and retried, then replanned from the live screen. There are deliberately no blind fallbacks (e.g. no clicking screen-center when an element isn't found).
+- **Outcomes, not steps.** Success is measured by whether the user's business outcome was achieved (eval checkers inspect real OS state), never by step/click counts.
 
 ## Commands
 
 ```powershell
-# Engine (repo root) — requires GROQ_API_KEY in .env
-.venv\Scripts\activate            # or .venv311; PyTorch/EasyOCR live here
-pip install -r requirements.txt
-python examples/natural_language_demo.py   # interactive CLI demo (controls the real screen)
+# Engine (repo root) — requires GROQ_API_KEY in .env; .venv311 has the deps
+.venv311\Scripts\activate
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests/ -q                    # unit tests, safe (fakes only)
+python examples/natural_language_demo.py      # interactive CLI (controls the real screen)
+
+# Evaluation harness (controls the real screen — run deliberately)
+python -m evals.harness run --suite evals/suite_core.json --label <name>
+python -m evals.harness compare evals/reports/a.json evals/reports/b.json
 
 # API backend (from api/, has its own .env with Supabase/JWT/Groq keys)
 pip install -r api/requirements.txt
-uvicorn main:app --reload --port 8000      # run from inside api/ — imports are cwd-relative
+uvicorn main:app --reload --port 8000         # run from inside api/ — imports are cwd-relative
 
 # Frontend (from frontend/)
 npm install
-npm run dev      # Next.js dev server on :3000 (note: "start" also runs dev; "serve" is prod)
-npm run build
-npm run lint
+npm run dev      # Next.js dev server on :3000 ("start" also runs dev; "serve" is prod)
+npm run build && npm run lint
 ```
 
-There is no test suite. Deployment: API → Railway via `api/nixpacks.toml`; frontend reads `NEXT_PUBLIC_API_URL`.
+Deployment: API → Railway via `api/nixpacks.toml`; frontend reads `NEXT_PUBLIC_API_URL`.
 
 ## Architecture
 
-### Three copies of the engine — edit `core/`
+### One runtime: the `perceptai/` package
 
-- `core/` — the live engine. All active development happens here.
-- `perceptai/` — pip-package variant (relative imports, friendlier config); an older snapshot that drifts unless deliberately synced.
-- `build/lib/` — stale setuptools build output. Never edit.
+There is exactly ONE execution loop in the repository — `perceptai/runtime.py:ExecutionEngine`. Never create a second one; extend this one. `AgentSession` (`session.py`) is the composition root: it owns config, workspace, LLM client, perception, actions, OS control, planner, healer, verifier, memory and the event bus. **No module-level mutable execution state anywhere** — the single sanctioned process-level cache is the EasyOCR model weights (immutable, behind a lock in `perception.py`).
 
-### Two agent loops — they are different
+Module map (dependencies flow downward, no cycles):
+- `contracts.py` — every cross-boundary type: Task, TaskContext, TaskResult, TaskEvent (in events), Step/StepResult, PlannerOutput, HealingPlan, VerificationResult, ExecutionState, ActionOutcome. Add fields here first; never pass loose dicts across module boundaries.
+- `events.py` — EventBus + EventType. The engine emits ONE canonical event stream; all consumers (CLI, SSE, DB, analytics, future runner protocol) derive from it. Never hand-build consumer events.
+- `streaming.py` — the only place that knows the dashboard SSE wire schema (`to_legacy_sse`, `legacy_steps`). Pinned by `tests/test_streaming.py`.
+- `config.py` — EngineConfig: all budgets, models, settle delays, paths. Every agentic loop must be budgeted (max_steps, max_replans, max_healing_attempts, find_retries).
+- `llm.py` — single Groq wrapper; JSON fence-stripping/permissive parsing lives ONLY here. Malformed LLM replies degrade, never raise, in the execution path.
+- `perception.py` / `actions.py` / `oscontrol.py` — services. Actions are dumb primitives (no focus logic). App launching is generic: PATH → App Paths registry → Win+R; no hardcoded exe paths. Screenshots go to the session workspace (`%TEMP%/perceptai/<id>/`).
+- `planner.py` — incremental: plans ≤`max_plan_steps` from the live screen; re-invoked after every launch/navigation and after unhealed failures. Plans are hypotheses, not scripts.
+- `healer.py` / `verification.py` — LLM failure diagnosis; verification derives checks from executed steps and only observes (never focuses/changes) OS state.
+- `memory.py` — MemoryStore (SQLite at `~/.perceptai/memory.db`). Write hooks are live; the recall path exists but isn't wired into planning yet (future chapter).
 
-1. **`core/agent.py` (`PerceptAgent.run`)** — used by the CLI examples. Executes a full pre-made plan from `core/planner.py:plan_task()`, with self-healing on failure (`core/healer.py:diagnose_failure()` — LLM suggests recovery steps, executed if confidence > 0.5, max 2 attempts) and writes screen state to SQLite memory after each step.
-2. **`api/executor.py` (`execute_task` / `execute_task_stream`)** — used by the API. Has its own planner (`plan_from_screen`, ≤5 steps at a time) that **replans from a fresh screen read after every `open_app`/`navigate_url`**, adds a `read_screen` action with LLM extraction, injects extracted text into placeholder `type` steps, caps at 12 steps, and ends with heuristic verification (`verify_post_task_state` — window-title matching → status `completed`/`unverified`/`failed`). It reuses `PerceptAgent.execute_step()` for individual actions but not `run()` — so the API path gets **no healing and no memory writes**.
-
-A feature added to one loop does not exist in the other.
-
-### Engine data flow (core/)
-
-- `perception.py` — `perceive_fast()` is the default (OCR-only, 0.8s cache, image downscaled to 960px). `perceive()` adds a Groq llama-4-scout vision call and merges OCR pixel coordinates into vision elements by text match; elements with no OCR match get `position {x:-1, y:-1}` — callers must check `x > 0` before clicking. Screenshot always saved to `temp_screen.png` at repo root.
-- `planner.py` / `healer.py` — Groq llama-3.3-70b, prompts demand raw JSON. Plan step vocabulary: `open_app | navigate_url | focus_window | click | type | press | wait` (agent also handles `clear_type`, `scroll`).
-- `action.py` — `type_text` pastes via clipboard (pyperclip + Ctrl+V), not keystrokes, to handle special characters.
-- `os_control.py` — hardcoded absolute app paths with Win+R fallback; window focus/enumeration via raw ctypes user32.
-- `memory.py` — SQLite `perceptai_memory.db`, tables `interface_maps` and `task_patterns`. Currently write-mostly: `recall_element`/`recall_task` exist but aren't wired into the execution loops.
+Execution loop semantics: perceive → plan → per step (ensure focus → act → emit events) → on failure: heal (bounded) → if unhealed: replan from live screen → if that fails: stop with FAILED. After open_app/navigate_url: settle, then replan. Final status: FAILED (a step failed), COMPLETED (verification passed), or UNVERIFIED (steps ok, verification couldn't confirm).
 
 ### API layer (api/)
 
-FastAPI, run from inside `api/` (flat cwd-relative imports; reaches `core/` via `sys.path` insertion in `executor.py`). Supabase Postgres via service-role key (`database.py`); schema in `database.sql` — `users`, `api_keys`, `sessions` (steps as JSONB), `usage` (per user-month counter), `plans`/`user_plans` (free 100 / builder 10k / scale ~unlimited executions per month).
+FastAPI, run from inside `api/` (flat cwd-relative imports). `api/executor.py` is a **thin adapter, not a runtime**: it creates AgentSessions, relays canonical events via `to_legacy_sse`, returns TaskResults, and degrades to a structured error on hosts without desktop deps (Railway). The SSE generator's final `"_result"` item is internal — persisted to the `sessions.result` JSONB column, never forwarded to clients.
 
-Two auth mechanisms:
-- **JWT Bearer** (HS256, 7 days, custom bcrypt users table — not Supabase Auth) → dashboard/keys routes.
-- **`X-API-Key`** (`pk_*` keys, SHA-256 hash stored, prefix shown) → execute routes. Signup auto-creates a free plan + default key.
+Supabase Postgres via service-role key; schema in `database.sql`. Two auth mechanisms: JWT Bearer (custom bcrypt users table) for dashboard/keys routes; `X-API-Key` (`pk_*`, SHA-256 hashed) for execute routes. Plans: free 100 / builder 10k / scale ~unlimited executions per month, enforced pre-execution; every execution is a `sessions` row (audit trail).
 
-Endpoints under `/api/v1`: `auth/signup|signin`, `execute` (sync), `execute/stream` (SSE, defined in `main.py`; executor runs in a worker thread feeding a queue; event types `session_id/plan/step_start/step_complete/replan/log/complete/error`), `dashboard/stats|sessions|usage`, `keys` CRUD (delete = soft-deactivate), `/screenshot`.
+**Execution happens on the machine hosting the API.** Cloud deploys have no desktop; real automation requires running the API on a local Windows machine. The long-term design is control-plane + local runners — keep new interfaces compatible with remote, asynchronous execution.
 
-**Execution happens on the machine hosting the API.** Deployed to Railway there is no desktop, so real automation only works when the API runs on a local Windows machine.
+### Evaluation (evals/)
+
+`harness.py` runs task suites and scores **outcomes against real OS state** (window exists, screen contains text, file contents, findings) — runtime-agnostic, so alternative runtimes can be compared via `--runner "<command {instruction}>"`. It also measures `self_report_honesty`: whether the runtime's claimed status matches ground truth. Run a suite before and after any engine change that could affect behavior. Baseline legacy runtime is tagged `chapter0-baseline`.
 
 ### Frontend (frontend/)
 
-Next.js 14 App Router + TypeScript + Tailwind + framer-motion + Recharts; dark terminal-green aesthetic. JWT stored in localStorage *and* a `perceptai_token` cookie; `middleware.ts` gates `/dashboard` by decoding JWT expiry client-side. `app/dashboard/page.tsx` (Run Task) consumes the SSE stream directly and auto-creates/caches an API key in localStorage; Sessions/Analytics poll the REST endpoints via `lib/api.ts`.
+Next.js 14 App Router + TypeScript + Tailwind + framer-motion + Recharts. JWT in localStorage + `perceptai_token` cookie; `middleware.ts` gates `/dashboard`. The Run Task page consumes the SSE stream; Sessions/Analytics poll REST via typed helpers in `lib/api.ts`. UI primitives in `components/ui/`, features under `components/dashboard/**` and `components/landing/**`, Tailwind + `cn()` helper.
 
 ## Coding standards
 
 **Python (engine + API)**
-- Action functions return result dicts — `{"success": bool, ...}` with an `"error"` key on failure — instead of raising. Callers check `result.get("success") is not False`. Follow this convention; don't introduce exception-based control flow into the step-execution path.
-- LLM calls: prompt demands "ONLY valid JSON", response is stripped of ``` fences, then `json.loads` with a safe fallback (empty plan / zero-confidence diagnosis). Never let a malformed LLM reply crash a run.
-- Expensive resources (EasyOCR reader, Groq clients, Supabase clients) are lazy module-level singletons behind `get_*()` accessors.
-- Progress reporting is `print()`-based with two-space indents (the CLI is the UI); no logging framework.
-- Timing matters: deliberate `time.sleep` settle-delays after every UI-affecting action are load-bearing, not cruft. Don't strip them; tune them.
+- Cross-boundary data uses the dataclasses in `contracts.py`; action primitives return `ActionOutcome`, never raise, in the step-execution path.
+- Services are classes owned by AgentSession and constructor-injectable — new dependencies must accept injection so `tests/conftest.py` fakes can replace them.
+- Heavy third-party imports (easyocr, groq, pyautogui, PIL, numpy) are lazy — the package must import cleanly on headless hosts.
+- Settle `time.sleep`s are load-bearing for real UI; they live in EngineConfig, not inline literals.
 - `api/` modules import each other flat (`from config import config`) — the server must run with `api/` as cwd.
 
 **TypeScript (frontend)**
-- Client components (`"use client"`) own their data-fetching: `useEffect` + `AbortController`, explicit `loading`/`error`/`unauthorized` state, skeleton/empty/error components per view.
-- All API access goes through typed helpers in `lib/api.ts`; API response shapes are mirrored as exported interfaces.
-- Styling is Tailwind utility classes with the `cn()` helper (`lib/utils.ts`); UI primitives live in `components/ui/`, feature components under `components/dashboard/**` and `components/landing/**`.
+- Client components own their data-fetching: `useEffect` + `AbortController`, explicit loading/error/unauthorized states, skeleton/empty/error components per view.
+- All API access through typed helpers in `lib/api.ts`; response shapes mirrored as exported interfaces.
 
 ## Engineering principles
 
-- **Perceive → plan → act → verify.** Never act on stale perception: re-read the screen after anything that changes it (app launch, navigation), and replan from what is actually visible. Plans use only text genuinely present on screen — no placeholder targets.
-- **Focus before input.** Every click/type/press is preceded by ensuring the target window is focused (`ensure_focus`, `last_app`/`last_window` tracking). Typing into the wrong window is the classic failure mode; guard against it.
-- **Bound all loops.** Step caps (12), retry caps (3), healing-attempt caps (2), plan-size caps (5–10). Any new agentic loop needs an explicit budget.
-- **Verify outcomes, don't trust step success.** Step results say an action fired, not that it worked — the verification pass checks real OS state (window exists/focusable) before reporting `completed`.
-- **Sessions are the audit trail.** Every API execution persists instruction, per-step results, timing, and status to `sessions`; usage is metered per user-month and enforced before execution.
+- **One source of truth per subsystem.** Never duplicate an execution path; refactor before adding a second version; delete obsolete code instead of accumulating it.
+- **Perceive → plan → act → verify.** Never act on stale perception; replan after anything that changes the screen; plans reference only text actually visible.
+- **Focus before input; observe-only verification.** Every click/type/press ensures target-window focus first. Verification never has side effects.
+- **Bound all loops.** Any new agentic loop needs explicit budgets in EngineConfig.
+- **Events are the observability spine.** New runtime behavior emits canonical events; consumers adapt in `streaming.py`, nowhere else.
+- **Measure before merging.** Engine behavior changes are validated by unit tests (safe) plus an eval-suite run (user-executed — it controls the desktop).

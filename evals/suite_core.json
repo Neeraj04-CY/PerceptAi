@@ -1,0 +1,80 @@
+{
+  "name": "core",
+  "description": "Baseline desktop capability suite. Success = observable business outcome, never step counts.",
+  "tasks": [
+    {
+      "id": "notepad_type",
+      "instruction": "open notepad and type The quick brown fox jumps over the lazy dog",
+      "checks": [
+        { "type": "window_exists", "keyword": "notepad" },
+        { "type": "screen_contains", "text": "quick brown fox" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    },
+    {
+      "id": "notepad_special_chars",
+      "instruction": "open notepad and type Price: $49.99 (20% off!) — email test@example.com",
+      "checks": [
+        { "type": "window_exists", "keyword": "notepad" },
+        { "type": "screen_contains", "text": "$49.99" },
+        { "type": "screen_contains", "text": "test@example.com" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    },
+    {
+      "id": "calculator_open",
+      "instruction": "open calculator",
+      "checks": [
+        { "type": "window_exists", "keyword": "calculator" }
+      ],
+      "cleanup": ["taskkill /IM CalculatorApp.exe /F", "taskkill /IM Calculator.exe /F"]
+    },
+    {
+      "id": "notepad_current_year",
+      "instruction": "open notepad and type today's date",
+      "checks": [
+        { "type": "window_exists", "keyword": "notepad" },
+        { "type": "screen_contains", "text": "{{year}}" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    },
+    {
+      "id": "web_example_domain",
+      "instruction": "open the website example.com in a browser",
+      "checks": [
+        { "type": "screen_contains", "text": "Example Domain" }
+      ],
+      "cleanup": []
+    },
+    {
+      "id": "web_wikipedia_search",
+      "instruction": "open en.wikipedia.org/wiki/Alan_Turing in a browser",
+      "checks": [
+        { "type": "screen_contains", "text": "Turing" }
+      ],
+      "cleanup": []
+    },
+    {
+      "id": "read_screen_extraction",
+      "instruction": "open example.com in a browser and read the main heading on the page",
+      "checks": [
+        { "type": "finding_contains", "text": "Example Domain" }
+      ],
+      "cleanup": []
+    },
+    {
+      "id": "two_apps_sequence",
+      "instruction": "open calculator and then open notepad and type done",
+      "checks": [
+        { "type": "window_exists", "keyword": "calculator" },
+        { "type": "window_exists", "keyword": "notepad" },
+        { "type": "screen_contains", "text": "done" }
+      ],
+      "cleanup": [
+        "taskkill /IM notepad.exe /F",
+        "taskkill /IM CalculatorApp.exe /F",
+        "taskkill /IM Calculator.exe /F"
+      ]
+    }
+  ]
+}

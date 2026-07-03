@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git tag *)",
+      "Bash(git checkout *)",
+      "Bash(py --version)",
+      "Bash(./.venv311/Scripts/python.exe -m pytest tests/ -q)",
+      "Bash(./.venv311/Scripts/python.exe -m pip install pytest -q)",
+      "Bash(./.venv311/Scripts/python.exe -m py_compile api/main.py api/routes/execute_routes.py api/models.py api/executor.py examples/natural_language_demo.py evals/harness.py evals/checkers.py)",
+      "Bash(git rm *)"
     ]
   }
 }

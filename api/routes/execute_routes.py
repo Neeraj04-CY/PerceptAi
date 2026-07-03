@@ -108,27 +108,50 @@ async def execute(
         "status": "running"
     }).execute()
     
-    # Execute task
-    result = execute_task(body.instruction)
-    
-    # Update session
+    # Execute task through the unified engine
+    result, engine_error = execute_task(body.instruction)
+
+    if result is None:
+        db.table("sessions").update({
+            "status": "failed",
+            "error": engine_error,
+            "completed_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", session_id).execute()
+        increment_usage(user_id, session_id)
+        return ExecuteResponse(
+            session_id=session_id,
+            status="failed",
+            instruction=body.instruction,
+            steps=[],
+            error=engine_error,
+            created_at=datetime.now(timezone.utc)
+        )
+
+    from perceptai.streaming import legacy_steps
+    steps = legacy_steps(result)
+    error = "; ".join(result.errors) if result.errors else None
+
     db.table("sessions").update({
-        "status": result["status"],
-        "steps": result["steps"],
-        "execution_time": result["execution_time"],
-        "error": result.get("error"),
+        "status": result.status.value,
+        "steps": steps,
+        "result": result.to_dict(),
+        "execution_time": result.duration_s,
+        "error": error,
         "completed_at": datetime.now(timezone.utc).isoformat()
     }).eq("id", session_id).execute()
-    
-    # Track usage
+
     increment_usage(user_id, session_id)
-    
+
     return ExecuteResponse(
         session_id=session_id,
-        status=result["status"],
+        status=result.status.value,
         instruction=body.instruction,
-        steps=result["steps"],
-        execution_time=result["execution_time"],
-        error=result.get("error"),
+        steps=steps,
+        execution_time=result.duration_s,
+        error=error,
+        summary=result.summary,
+        confidence=result.confidence,
+        verification=result.verification.to_dict() if result.verification else None,
+        findings=[{"label": f.label, "value": f.value, "source": f.source} for f in result.findings],
         created_at=datetime.now(timezone.utc)
     )

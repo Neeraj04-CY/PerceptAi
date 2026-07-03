@@ -52,6 +52,10 @@ class ExecuteResponse(BaseModel):
     steps: List[ExecutionStep] = []
     execution_time: Optional[float] = None
     error: Optional[str] = None
+    summary: Optional[str] = None
+    confidence: Optional[float] = None
+    verification: Optional[Any] = None
+    findings: List[Any] = []
     created_at: datetime
 
 # Session History

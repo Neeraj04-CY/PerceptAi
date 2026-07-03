@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException, Header
 import traceback
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 import asyncio
@@ -46,13 +45,12 @@ app.include_router(keys_router, prefix="/api/v1")
 
 @app.get("/api/v1/screenshot")
 async def get_screenshot():
-    """Return the last perception screenshot."""
-    screenshot_path = Path(__file__).parent / "temp_screen.png"
-    if screenshot_path.exists():
-        with open(screenshot_path, "rb") as handle:
-            data = handle.read()
+    """Return the most recent perception screenshot."""
+    from executor import latest_screenshot_path
+    screenshot_path = latest_screenshot_path()
+    if screenshot_path is not None and screenshot_path.exists():
         return Response(
-            content=data,
+            content=screenshot_path.read_bytes(),
             media_type="image/png",
             headers={
                 "Access-Control-Allow-Origin": "*",
@@ -109,6 +107,8 @@ async def execute_stream(
         all_steps = []
         final_status = "completed"
         execution_time = 0.0
+        final_result = None
+        final_error = None
 
         while True:
             try:
@@ -122,6 +122,15 @@ async def execute_stream(
             if event is None:
                 break
 
+            # Internal terminal marker: persist, never forward to clients.
+            if event.get("type") == "_result":
+                final_result = event.get("result")
+                all_steps = event.get("steps") or all_steps
+                final_status = event.get("status", final_status)
+                execution_time = event.get("execution_time", execution_time)
+                final_error = event.get("error")
+                continue
+
             yield f"data: {json.dumps(event)}\n\n"
 
             if event.get("type") == "step_complete":
@@ -129,10 +138,15 @@ async def execute_stream(
             if event.get("type") == "complete":
                 final_status = event.get("status", "completed")
                 execution_time = event.get("execution_time", 0)
+            if event.get("type") == "error":
+                final_status = "failed"
+                final_error = event.get("message")
 
         db.table("sessions").update({
             "status": final_status,
             "steps": all_steps,
+            "result": final_result,
+            "error": final_error,
             "execution_time": execution_time,
             "completed_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", session_id).execute()
