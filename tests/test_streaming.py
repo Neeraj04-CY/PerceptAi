@@ -90,6 +90,27 @@ def test_task_completed_maps_to_complete():
     }
 
 
+def test_world_snapshot_maps_to_world():
+    sse = to_legacy_sse(
+        _emit(
+            EventType.WORLD_SNAPSHOT,
+            mode="fast", focused_window="Notepad", windows=3, elements=24,
+            interactive=7, confidence=0.87,
+            providers=[{"name": "uia", "source": "uia", "ok": True,
+                        "observations": 18, "latency_ms": 120.0}],
+            changed=True, summary="focus moved to 'Notepad'",
+        )
+    )
+    assert sse["type"] == "world"
+    assert sse["focused_window"] == "Notepad"
+    assert sse["elements"] == 24
+    assert sse["interactive"] == 7
+    assert sse["confidence"] == 0.87
+    assert sse["providers"][0]["name"] == "uia"
+    assert sse["changed"] is True
+    assert "timestamp" in sse
+
+
 def test_every_event_type_has_a_mapping_or_none():
     for event_type in EventType:
         sse = to_legacy_sse(_emit(event_type))

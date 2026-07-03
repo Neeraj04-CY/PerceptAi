@@ -46,9 +46,9 @@ One plain-English instruction in. A structured, verified outcome out.
 ```
 Plain English Instruction
         ↓
-   Screen Perception          OCR (EasyOCR) + Vision AI (Groq llama-4-scout)
-        ↓
-   Incremental Planning       Groq LLaMA 3.3 plans from the LIVE screen,
+   Universal Perception       UI Automation + OCR + Vision AI + OS metadata,
+        ↓                     fused into ONE confidence-scored world model
+   Incremental Planning       Groq LLaMA 3.3 plans from the LIVE world state,
         ↓                     replans after every screen change
    Action Execution           PyAutoGUI + Windows APIs, focus-tracked
         ↓
@@ -96,8 +96,11 @@ perceptai/               the engine — ONE execution runtime
 ├── runtime.py           ExecutionEngine: perceive → plan → act → verify loop
 ├── contracts.py         typed contracts (Task, TaskResult, Step, Finding, ...)
 ├── events.py            canonical event stream (EventBus)
-├── perception.py        OCR + vision perception with pixel coordinates
-├── planner.py           incremental LLM planning from the live screen
+├── providers.py         perception plugins (UI Automation, OCR, vision, Win32)
+├── fusion.py            multi-source fusion + confidence engine
+├── world.py             the world model — the ONE perception surface
+├── perception.py        screenshot + OCR substrate
+├── planner.py           incremental LLM planning from the live world state
 ├── healer.py            failure diagnosis and recovery
 ├── verification.py      side-effect-free outcome verification
 ├── actions.py           input primitives (click, type, press, scroll)

@@ -24,8 +24,10 @@ from .memory import MemoryStore
 from .oscontrol import AppLauncher, WindowManager
 from .perception import PerceptionService
 from .planner import Planner
+from .providers import default_providers
 from .reporting import ReportBuilder
 from .verification import Verifier
+from .world import WorldModel
 
 
 class AgentSession:
@@ -46,6 +48,7 @@ class AgentSession:
         goal_analyzer: Optional[GoalAnalyzer] = None,
         evidence_collector: Optional[EvidenceCollector] = None,
         reporter: Optional[ReportBuilder] = None,
+        world: Optional[WorldModel] = None,
     ):
         self.config = config or EngineConfig.from_env()
         self.id = str(uuid.uuid4())
@@ -64,6 +67,16 @@ class AgentSession:
         self.goals = goal_analyzer or GoalAnalyzer(self.config, self.llm)
         self.evidence = evidence_collector or EvidenceCollector(self.config, self.llm)
         self.reporter = reporter or ReportBuilder(self.config, self.llm)
+        # The unified perception surface: providers -> fusion -> WorldState.
+        # Built last so injected fakes (perception, windows, llm) flow into
+        # the default provider set automatically.
+        self.world = world or WorldModel(
+            self.config,
+            default_providers(
+                self.config, perception=self.perception,
+                windows=self.windows, llm=self.llm,
+            ),
+        )
 
     def emit(self, type: EventType, task: Task, **payload) -> None:
         self.events.emit(type, session_id=self.id, task_id=task.id, **payload)

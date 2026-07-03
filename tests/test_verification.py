@@ -117,3 +117,52 @@ def test_verification_never_calls_focus():
     steps = [_ok("open_app", app="myapp"), _ok("type", text="hi", app="myapp")]
     verifier.verify(TaskContext("type"), steps)
     assert windows.focus_calls == []  # observation only, no side effects
+
+
+# ------------------------------------------------------- world-change checks
+
+def _world_state(windows=(), focused="", elements=()):
+    from perceptai.contracts import UIElement, WindowInfo, WorldState
+
+    return WorldState(
+        windows=[WindowInfo(title=t, focused=(t == focused)) for t in windows],
+        elements=[
+            UIElement(id=f"el_{i:03d}", role="text", name=name)
+            for i, name in enumerate(elements, start=1)
+        ],
+        focused_window=focused,
+    )
+
+
+def test_world_change_confirms_state_changing_actions():
+    verifier = Verifier(FakeWindows(["notepad"]))
+    before = _world_state(windows=("Desktop",), focused="Desktop")
+    after = _world_state(windows=("Desktop", "notepad"), focused="notepad",
+                         elements=("File", "Edit"))
+    result = verifier.verify(
+        TaskContext("open notepad"), [_ok("open_app", app="notepad")],
+        world_before=before, world_after=after,
+    )
+    world_check = next(c for c in result.checks if c.name == "world_changed")
+    assert world_check.passed
+    assert "notepad" in world_check.detail
+
+
+def test_unchanged_world_after_actions_is_reported_not_fatal():
+    verifier = Verifier(FakeWindows(["notepad"]))
+    same = _world_state(windows=("notepad",), focused="notepad", elements=("File",))
+    result = verifier.verify(
+        TaskContext("open notepad"), [_ok("open_app", app="notepad")],
+        world_before=same, world_after=same,
+    )
+    world_check = next(c for c in result.checks if c.name == "world_changed")
+    assert not world_check.passed
+    assert not world_check.critical      # advisory: never fails the task alone
+    assert result.verified               # window_exists still confirms
+
+
+def test_world_checks_skipped_without_snapshots_or_actions():
+    verifier = Verifier(FakeWindows([]))
+    result = verifier.verify(TaskContext("wait"), [_ok("wait", wait=1.0)],
+                             world_before=_world_state(), world_after=_world_state())
+    assert all(c.name != "world_changed" for c in result.checks)

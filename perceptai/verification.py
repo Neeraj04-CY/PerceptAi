@@ -2,8 +2,11 @@
 
 Checks derive from what the task actually did — the apps it opened, the
 windows it focused, the input it sent, the information it was asked to
-extract. No per-application alias tables, no special cases, and no side
-effects: verification observes OS state, it never changes focus.
+extract — and from how the WORLD CHANGED between the first and the last
+observation ("did a window appear?", "did focus move?", "did content
+change?"), not merely whether inputs were sent. No per-application alias
+tables, no special cases, and no side effects: verification observes OS
+state, it never changes focus.
 """
 from __future__ import annotations
 
@@ -16,8 +19,19 @@ from .contracts import (
     TaskContext,
     VerificationCheck,
     VerificationResult,
+    WorldState,
 )
 from .oscontrol import WindowManager
+
+# Actions that are expected to change the observable world.
+_STATE_CHANGING = (
+    ActionType.OPEN_APP,
+    ActionType.NAVIGATE_URL,
+    ActionType.CLICK,
+    ActionType.TYPE,
+    ActionType.CLEAR_TYPE,
+    ActionType.PRESS,
+)
 
 
 class Verifier:
@@ -31,7 +45,13 @@ class Verifier:
         self._llm = llm
         self._config = config
 
-    def verify(self, context: TaskContext, steps: list[StepResult]) -> VerificationResult:
+    def verify(
+        self,
+        context: TaskContext,
+        steps: list[StepResult],
+        world_before: Optional[WorldState] = None,
+        world_after: Optional[WorldState] = None,
+    ) -> VerificationResult:
         checks: list[VerificationCheck] = []
 
         opened_apps = {
@@ -110,6 +130,7 @@ class Verifier:
                 )
             )
 
+        checks.extend(self._world_change_checks(steps, world_before, world_after))
         checks.extend(self._judge_completion_criteria(context, steps))
 
         if not checks:
@@ -134,6 +155,35 @@ class Verifier:
         return VerificationResult(
             verified=passed_critical, confidence=confidence, reason=reason, checks=checks
         )
+
+    @staticmethod
+    def _world_change_checks(
+        steps: list[StepResult],
+        world_before: Optional[WorldState],
+        world_after: Optional[WorldState],
+    ) -> list[VerificationCheck]:
+        """World-state comparison: successful state-changing actions must
+        leave an observable trace. Advisory (non-critical) — perception
+        gaps must not fail a task that other checks confirm."""
+        if world_before is None or world_after is None:
+            return []
+        acted = any(r.step.action in _STATE_CHANGING and r.ok for r in steps)
+        if not acted:
+            return []
+        from .world import WorldModel
+
+        diff = WorldModel.diff(world_before, world_after)
+        detail = diff.summary
+        if diff.appeared_windows:
+            detail += f" (appeared: {', '.join(diff.appeared_windows[:3])})"
+        return [
+            VerificationCheck(
+                name="world_changed",
+                passed=diff.changed,
+                critical=False,
+                detail=detail or "no observable change between first and last snapshot",
+            )
+        ]
 
     def _judge_completion_criteria(
         self, context: TaskContext, steps: list[StepResult]

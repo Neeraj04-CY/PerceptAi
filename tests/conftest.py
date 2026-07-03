@@ -35,9 +35,6 @@ class FakePerception:
     def perceive_fast(self, region=None, force_refresh=False) -> Perception:
         return self._next()
 
-    def perceive_full(self, region=None) -> Perception:
-        return self._next()
-
 
 class FakeWindows:
     def __init__(self, windows: list[str] | None = None):

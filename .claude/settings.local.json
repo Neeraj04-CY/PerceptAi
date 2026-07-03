@@ -14,7 +14,24 @@
       "Bash(echo \"tsc exit: $?\")",
       "Bash(npx next *)",
       "Bash(./.venv311/Scripts/python.exe -m py_compile api/main.py api/routes/execute_routes.py api/models.py api/executor.py evals/checkers.py evals/harness.py)",
-      "Bash(./.venv311/Scripts/python.exe -c ' *)"
+      "Bash(./.venv311/Scripts/python.exe -c ' *)",
+      "Bash(git push *)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 40)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 30)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 5)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -c \"from perceptai.fusion import text_similarity; print\\(text_similarity\\('Submit','Submlt'\\), text_similarity\\('Save','Save As'\\), text_similarity\\('OK','Cancel'\\)\\)\")",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 3)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pip install uiautomation 2>&1 | Select-Object -Last 3)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pip show uiautomation | Select-Object -First 3)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m evals.perception_bench --snapshots 2 --label chapter3-validation 2>&1 | Select-Object -Last 20)",
+      "Skill(dataviz)",
+      "PowerShell(npm run *)",
+      "PowerShell(if \\(Test-Path \"$env:USERPROFILE\\\\.EasyOCR\\\\model\"\\) { Get-ChildItem \"$env:USERPROFILE\\\\.EasyOCR\\\\model\" | Select-Object Name, Length, LastWriteTime } else { \"no .EasyOCR model dir\" })",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Remove-Job *)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 3; .venv311\\\\Scripts\\\\python.exe -c \"import perceptai; print\\('import ok', perceptai.__version__\\); s = perceptai.AgentSession\\(perceptai.EngineConfig\\(groq_api_key='x'\\)\\); print\\('session ok, providers:', [p.name for p in s.world._providers]\\)\")",
+      "PowerShell(git checkout *)",
+      "PowerShell(git *)"
     ]
   }
 }

@@ -103,6 +103,24 @@ class MemoryStore:
                         ),
                     )
 
+    def recall_interface(self, app_name: str, limit: int = 15) -> list[dict]:
+        """Perception memory read path: the most stable elements previously
+        observed in this app, ranked by how often they were seen. Feeds the
+        planner's world view — it never positions a click by itself."""
+        if not app_name:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT element_text, element_type, seen_count, confidence
+                   FROM interface_maps WHERE app_name=?
+                   ORDER BY seen_count DESC, last_seen DESC LIMIT ?""",
+                (app_name, limit),
+            ).fetchall()
+        return [
+            {"text": r[0], "type": r[1], "seen_count": r[2], "confidence": r[3]}
+            for r in rows
+        ]
+
     def recall_element(self, app_name: str, element_text: str) -> Optional[dict]:
         with self._connect() as conn:
             c = conn.cursor()

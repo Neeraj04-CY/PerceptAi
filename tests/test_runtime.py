@@ -173,3 +173,30 @@ def test_events_and_result_share_step_data(harness):
     completed = [e for e in events if e.type == EventType.STEP_COMPLETED]
     assert len(completed) == len(result.steps)
     assert completed[0].payload["step_number"] == result.steps[0].index
+
+
+def test_world_snapshots_are_emitted_on_canonical_stream(harness):
+    session, fakes, events = harness(
+        plans=[[_step("open_app", "open notepad", app="notepad", wait=0.0)]],
+        screens=[["File", "Edit"]],
+    )
+    session.run("open notepad")
+    snapshots = [e for e in events if e.type == EventType.WORLD_SNAPSHOT]
+    assert snapshots, "planning must emit a world snapshot"
+    payload = snapshots[0].payload
+    assert "confidence" in payload
+    assert "providers" in payload
+    assert any(p["name"] == "ocr" for p in payload["providers"])
+
+
+def test_click_outcome_carries_perception_confidence(harness):
+    session, fakes, events = harness(
+        plans=[[_step("click", "click submit", find="Submit", app="myapp")]],
+        screens=[["Home", "Submit", "Cancel"]],
+        windows=["myapp - window"],
+    )
+    result = session.run("click submit")
+    data = result.steps[0].data
+    assert data["element"] == "Submit"
+    assert 0.0 < data["confidence"] <= 0.99
+    assert "ocr" in data["sources"]

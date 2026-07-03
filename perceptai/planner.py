@@ -23,7 +23,7 @@ class Planner:
     def plan(
         self,
         instruction: str,
-        screen_text: str,
+        world_view: str,
         completed: list[StepResult],
         open_windows: list[str] | None = None,
         source: str = "planner",
@@ -63,8 +63,8 @@ GOAL: {instruction}
 Already done:
 {completed_summary}
 
-Currently visible on screen (OCR):
-{screen_text}
+CURRENT WORLD STATE (fused from UI Automation, OCR and vision; percentages are perception confidence):
+{world_view}
 {windows_context}
 
 Generate the NEXT steps (maximum {self._config.max_plan_steps}) toward the goal.
@@ -72,7 +72,8 @@ If every objective is already achieved, return an empty array: []
 
 Rules:
 - Open or focus the target application BEFORE interacting with it.
-- Use ONLY text that is ACTUALLY VISIBLE on screen for any "find" field. Never invent placeholder text.
+- For "find" fields use the EXACT name of an element listed in the world state above. Never invent placeholder text.
+- Prefer elements with higher confidence; elements marked '?' are uncertain.
 - For dates/times use actual values: {now.strftime("%B %d, %Y")} / {now.strftime("%I:%M %p")}
 - Include an "app" field naming the target application in EVERY step.
 - Use navigate_url to open websites instead of clicking the address bar.

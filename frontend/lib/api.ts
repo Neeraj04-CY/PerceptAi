@@ -28,10 +28,22 @@ export interface ApiTaskReport {
   next_actions: string[];
 }
 
+export interface ApiPerceptionStats {
+  snapshots: number;
+  providers: Record<
+    string,
+    { calls: number; failures: number; observations: number; avg_latency_ms: number }
+  >;
+  final_confidence?: number;
+  final_elements?: number;
+  final_windows?: number;
+}
+
 export interface ApiTaskResult {
   status: string;
   summary?: string;
   report?: ApiTaskReport | null;
+  metadata?: { perception?: ApiPerceptionStats; [key: string]: unknown } | null;
   goal?: {
     intent: string;
     deliverable: string;

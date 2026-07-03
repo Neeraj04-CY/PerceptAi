@@ -39,3 +39,23 @@ def test_empty_values_are_not_stored(tmp_path):
     store = MemoryStore(tmp_path / "mem.db")
     store.remember_evidence("t", [Evidence(kind="text", label="x", value="")])
     assert store.recall_knowledge(["x"]) == []
+
+
+def test_recall_interface_ranks_by_stability(tmp_path):
+    store = MemoryStore(tmp_path / "mem.db")
+    # "Save" seen three times, "Tools" once — Save is the more stable control.
+    for _ in range(3):
+        store.remember_interface("editor", [
+            {"text": "Save", "type": "button", "x": 100, "y": 50, "confidence": 0.95},
+        ])
+    store.remember_interface("editor", [
+        {"text": "Tools", "type": "menu_item", "x": 200, "y": 50, "confidence": 0.9},
+    ])
+
+    recalled = store.recall_interface("editor")
+    assert [r["text"] for r in recalled] == ["Save", "Tools"]
+    assert recalled[0]["seen_count"] == 3
+    assert recalled[0]["type"] == "button"
+
+    assert store.recall_interface("") == []
+    assert store.recall_interface("unknown-app") == []

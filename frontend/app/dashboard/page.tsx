@@ -7,6 +7,7 @@ import { ExecutionTimeline } from "@/components/dashboard/run/execution-timeline
 import { TerminalLogs } from "@/components/dashboard/run/terminal-logs";
 import { ScreenPreview } from "@/components/dashboard/run/screen-preview";
 import { SessionInfo, type SessionMeta } from "@/components/dashboard/run/session-info";
+import { WorldModelPanel, type WorldSnapshot } from "@/components/dashboard/run/world-model";
 import { type TimelineStep, type LogLine } from "@/components/dashboard/run/mock-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -45,6 +46,7 @@ export default function RunTaskPage() {
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  const [worlds, setWorlds] = useState<WorldSnapshot[]>([]);
   const [running, setRunning] = useState(false);
   const [meta, setMeta] = useState<SessionMeta>(makeInitialMeta());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -63,6 +65,7 @@ export default function RunTaskPage() {
     setSteps([]);
     setActiveIndex(-1);
     setLogs([]);
+    setWorlds([]);
   };
 
   const handleRun = useCallback(async (task: string) => {
@@ -256,6 +259,13 @@ export default function RunTaskPage() {
               }]);
               break;
 
+            case "world":
+              setWorlds((prev) => [
+                ...prev.slice(-63),
+                { ...(event as WorldSnapshot), receivedAt: Date.now() },
+              ]);
+              break;
+
             case "log":
               setLogs((prev) => [...prev, {
                 ts: formatTime(new Date()),
@@ -353,6 +363,8 @@ export default function RunTaskPage() {
       </motion.div>
 
       <ExecutionTimeline steps={steps} activeIndex={activeIndex} visible={timelineVisible} />
+
+      <WorldModelPanel snapshots={worlds} />
 
       <motion.div
         initial={{ opacity: 0, y: 14 }}

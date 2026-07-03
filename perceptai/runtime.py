@@ -4,6 +4,11 @@ perceive -> plan -> act -> verify, with incremental replanning after
 anything that changes the screen, bounded healing on failure, and a
 replan-from-live-screen escalation when healing fails. Every branch is
 budgeted; every transition emits a canonical event.
+
+Perception flows exclusively through the world model: the engine never
+reads raw OCR. Every snapshot is a fused, confidence-scored WorldState;
+element lookups, planner context, healing context and verification all
+derive from it.
 """
 from __future__ import annotations
 
@@ -23,10 +28,11 @@ from .contracts import (
     TaskContext,
     TaskResult,
     TaskStatus,
+    UIElement,
+    WorldState,
     utc_now_iso,
 )
 from .events import EventType
-from .perception import Perception, find_element
 
 if TYPE_CHECKING:
     from .session import AgentSession
@@ -38,7 +44,47 @@ class ExecutionEngine:
     def __init__(self, session: "AgentSession"):
         self._s = session
         self._config = session.config
-        self._last_perception: Optional[Perception] = None
+        self._last_world: Optional[WorldState] = None
+        self._baseline_world: Optional[WorldState] = None
+
+    # -------------------------------------------------------- world model
+
+    def _perceive(self, task: Task, mode: str = "fast",
+                  force_refresh: bool = True) -> WorldState:
+        """Take a world snapshot and emit it on the canonical stream."""
+        world = self._s.world.snapshot(mode=mode, force_refresh=force_refresh)
+        self._last_world = world
+        if self._baseline_world is None:
+            self._baseline_world = world
+        self._emit_world(task, world)
+        return world
+
+    def _emit_world(self, task: Task, world: WorldState) -> None:
+        diff = self._s.world.last_diff
+        # Inspector sample: the most useful elements, kept small on purpose —
+        # the event stream is observability, not a bulk data channel.
+        sample = world.interactive_elements or world.elements
+        self._s.emit(
+            EventType.WORLD_SNAPSHOT, task,
+            mode=world.mode,
+            focused_window=world.focused_window,
+            windows=len(world.windows),
+            elements=len(world.elements),
+            interactive=len(world.interactive_elements),
+            confidence=world.confidence,
+            providers=[
+                {"name": r.name, "source": r.source, "ok": r.ok,
+                 "observations": r.observations, "latency_ms": r.latency_ms}
+                for r in world.providers
+            ],
+            top_elements=[
+                {"name": el.name, "role": el.role,
+                 "confidence": el.confidence, "sources": el.sources}
+                for el in sample[:12] if el.name
+            ],
+            changed=bool(diff.changed) if diff else False,
+            summary=diff.summary if diff else "",
+        )
 
     # ------------------------------------------------------------------ run
 
@@ -151,17 +197,36 @@ class ExecutionEngine:
 
     def _plan(self, task: Task, context: TaskContext, executed: list[StepResult],
               state: ExecutionState, source: str) -> list[Step]:
-        perception = self._s.perception.perceive_fast(force_refresh=True)
-        self._last_perception = perception
-        try:
-            windows = self._s.windows.list_windows()
-        except Exception:
-            windows = []
+        world = self._perceive(task)
+        world_view = self._s.world.describe(world)
+        world_view = self._append_known_controls(world_view, state)
+        windows = [w.title for w in world.windows]
+        if not windows:
+            try:
+                windows = self._s.windows.list_windows()
+            except Exception:
+                windows = []
         output = self._s.planner.plan(
-            task.instruction, perception.screen_text, executed, windows,
+            task.instruction, world_view, executed, windows,
             source=source, goal=context.goal, known_facts=context.facts,
         )
         return output.steps if output.ok else []
+
+    def _append_known_controls(self, world_view: str, state: ExecutionState) -> str:
+        """Perception memory: controls this app exposed in previous runs.
+        Informs planning only — a remembered control is never clicked
+        unless the live world model confirms it."""
+        app = state.current_app or state.current_window
+        if not app:
+            return world_view
+        try:
+            known = self._s.memory.recall_interface(app)
+        except Exception:
+            known = []
+        if not known:
+            return world_view
+        names = ", ".join(k["text"] for k in known[:12])
+        return world_view + f"\nControls seen before in {app} (memory): {names}"
 
     def _replan(self, task: Task, context: TaskContext, executed: list[StepResult],
                 state: ExecutionState, reason: str) -> Optional[list[Step]]:
@@ -194,7 +259,7 @@ class ExecutionEngine:
         started_at = utc_now_iso()
         t0 = time.time()
         try:
-            outcome = self._dispatch(step, context, state)
+            outcome = self._dispatch(task, step, context, state)
         except Exception as e:
             outcome = ActionOutcome(ok=False, error=str(e))
 
@@ -222,7 +287,8 @@ class ExecutionEngine:
             )
         return result
 
-    def _dispatch(self, step: Step, context: TaskContext, state: ExecutionState) -> ActionOutcome:
+    def _dispatch(self, task: Task, step: Step, context: TaskContext,
+                  state: ExecutionState) -> ActionOutcome:
         action, params = step.action, step.params
 
         if action == ActionType.OPEN_APP:
@@ -266,12 +332,22 @@ class ExecutionEngine:
             if not query:
                 return ActionOutcome(ok=False, error="click step missing 'find'")
             self._ensure_focus(step, state)
-            match = self._find_with_retry(query)
-            if match is None:
+            element = self._find_with_retry(query)
+            if element is None:
                 # Deliberate: no blind fallback clicks. Honest failure feeds
                 # healing and replanning; a wrong click can cause real damage.
                 return ActionOutcome(ok=False, error=f"Element '{query}' not found on screen")
-            return self._s.actions.click(match.x, match.y)
+            x, y = element.center
+            outcome = self._s.actions.click(x, y)
+            if outcome.ok:
+                # Uncertainty propagates: consumers see what was clicked,
+                # how sure perception was, and which sources agreed.
+                outcome.data.update(
+                    element=element.name, role=element.role,
+                    confidence=element.confidence, sources=element.sources,
+                )
+                self._remember_element(state, element)
+            return outcome
 
         if action in (ActionType.TYPE, ActionType.CLEAR_TYPE):
             text = self._resolve_placeholder(str(params.get("text", "")), context)
@@ -305,11 +381,10 @@ class ExecutionEngine:
 
         if action == ActionType.READ_SCREEN:
             time.sleep(1.0)
-            perception = self._s.perception.perceive_fast(force_refresh=True)
-            self._last_perception = perception
+            world = self._perceive(task)
             goal_info = str(params.get("find") or context.instruction)
             source = context.sources[-1] if context.sources else (state.current_window or "screen")
-            items = self._s.evidence.collect(goal_info, perception.screen_text, source)
+            items = self._s.evidence.collect(goal_info, world.screen_text, source)
             context.add_evidence(items)
             extracted = "; ".join(i.value for i in items)
             return ActionOutcome(
@@ -337,21 +412,23 @@ class ExecutionEngine:
         except Exception:
             pass
 
-    def _find_with_retry(self, query: str):
+    def _find_with_retry(self, query: str) -> Optional[UIElement]:
+        """Resolve a query against the live world model. Cheap snapshots
+        first; one vision escalation when the fast providers can't see it."""
         for attempt in range(self._config.find_retries):
-            perception = self._s.perception.perceive_fast(force_refresh=attempt > 0)
-            self._last_perception = perception
-            match = find_element(perception, query)
-            if match is not None and match.has_position:
-                return match
+            world = self._s.world.snapshot(force_refresh=attempt > 0)
+            self._last_world = world
+            element = self._s.world.find(world, query)
+            if element is not None and element.has_position:
+                return element
             if attempt == 1:
-                # Escalate to full vision perception once.
+                # Escalate to full perception (vision LLM) once.
                 try:
-                    perception = self._s.perception.perceive_full()
-                    self._last_perception = perception
-                    match = find_element(perception, query)
-                    if match is not None and match.has_position:
-                        return match
+                    world = self._s.world.snapshot(mode="full", force_refresh=True)
+                    self._last_world = world
+                    element = self._s.world.find(world, query)
+                    if element is not None and element.has_position:
+                        return element
                 except Exception:
                     pass
             time.sleep(1)
@@ -382,8 +459,14 @@ class ExecutionEngine:
             self._s.emit(EventType.HEALING_STARTED, task, attempt=attempt, failed_step=step.description)
 
             try:
-                perception = self._s.perception.perceive_fast(force_refresh=True)
-                plan = self._s.healer.diagnose(step, result.error or "step failed", perception.screen_text)
+                world = self._perceive(task)
+                world_view = self._s.world.describe(world)
+                diff = self._s.world.last_diff
+                if diff is not None and diff.summary:
+                    # WHY before HOW: the healer sees what changed since the
+                    # failure (dialog appeared? focus moved? window closed?).
+                    world_view += f"\nSince the failed step: {diff.summary}"
+                plan = self._s.healer.diagnose(step, result.error or "step failed", world_view)
             except Exception as e:
                 self._s.emit(EventType.HEALING_RESULT, task, healed=False, diagnosis=f"diagnosis failed: {e}")
                 continue
@@ -415,17 +498,39 @@ class ExecutionEngine:
     # -------------------------------------------------------------- memory
 
     def _remember_interface(self, state: ExecutionState) -> None:
+        """Perception memory: persist the fused elements of this app so
+        future runs know its stable controls."""
         app = state.current_app or state.current_window
-        if not app or self._last_perception is None:
+        if not app or self._last_world is None:
             return
         try:
             elements = [
-                {"text": b.text, "type": "text", "x": b.x, "y": b.y, "confidence": b.confidence}
-                for b in self._last_perception.text_blocks
+                {
+                    "text": el.name, "type": el.role,
+                    "x": el.center[0], "y": el.center[1],
+                    "confidence": el.confidence,
+                }
+                for el in self._last_world.elements
+                if el.name and el.has_position
             ]
             self._s.memory.remember_interface(app, elements)
         except Exception:
             pass  # memory is best-effort; it never affects execution
+
+    def _remember_element(self, state: ExecutionState, element: UIElement) -> None:
+        """Reinforce a successfully used element identity."""
+        app = state.current_app or state.current_window
+        if not app or not element.name:
+            return
+        try:
+            self._s.memory.remember_interface(
+                app,
+                [{"text": element.name, "type": element.role,
+                  "x": element.center[0], "y": element.center[1],
+                  "confidence": element.confidence}],
+            )
+        except Exception:
+            pass
 
     # -------------------------------------------------------------- finish
 
@@ -434,8 +539,21 @@ class ExecutionEngine:
         state.llm_calls = self._s.llm.calls
         duration = round(time.time() - started, 2)
 
+        # Final observation: did the world actually change? Observe-only —
+        # a snapshot reads the screen, it never touches focus or input.
+        final_world: Optional[WorldState] = None
+        if executed:
+            try:
+                final_world = self._s.world.snapshot(force_refresh=True)
+                self._last_world = final_world
+            except Exception:
+                final_world = None
+
         try:
-            verification = self._s.verifier.verify(context, executed)
+            verification = self._s.verifier.verify(
+                context, executed,
+                world_before=self._baseline_world, world_after=final_world,
+            )
         except Exception as e:
             from .contracts import VerificationResult
             verification = VerificationResult(verified=False, reason=f"Verification unavailable: {e}")
@@ -498,6 +616,7 @@ class ExecutionEngine:
                 "llm_calls": state.llm_calls,
                 "evidence_count": len(context.evidence),
                 "sources": list(context.sources),
+                "perception": self._perception_metadata(final_world),
             },
         )
 
@@ -519,6 +638,20 @@ class ExecutionEngine:
             report=report.to_dict(),
         )
         return result
+
+    def _perception_metadata(self, final_world: Optional[WorldState]) -> dict:
+        """Perception health for the result: snapshot counts, provider
+        stats, and the final world confidence. Uncertainty is reported,
+        never hidden."""
+        try:
+            meta = self._s.world.stats()
+        except Exception:
+            meta = {}
+        if final_world is not None:
+            meta["final_confidence"] = final_world.confidence
+            meta["final_elements"] = len(final_world.elements)
+            meta["final_windows"] = len(final_world.windows)
+        return meta
 
     @staticmethod
     def _actions_summary(executed: list[StepResult]) -> str:

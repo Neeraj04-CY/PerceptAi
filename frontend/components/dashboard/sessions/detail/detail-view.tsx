@@ -16,6 +16,7 @@ import {
 import { getSession, type ApiSession } from "@/lib/api";
 import { SessionStatusPill } from "@/components/dashboard/sessions/session-status-pill";
 import { MetricCard } from "./metric-card";
+import { PerceptionCard } from "./perception-card";
 import { ReportCard } from "./report-card";
 import { StepTimeline } from "./step-timeline";
 import { RuntimeLogs } from "./runtime-logs";
@@ -204,6 +205,11 @@ function Loaded({
 
       {/* The deliverable — leads everything else */}
       {session.result?.report && <ReportCard report={session.result.report} />}
+
+      {/* How the agent saw */}
+      {session.result?.metadata?.perception && (
+        <PerceptionCard stats={session.result.metadata.perception} />
+      )}
 
       {/* Timeline */}
       <StepTimeline steps={session.steps || []} />

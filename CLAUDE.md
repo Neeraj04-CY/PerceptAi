@@ -4,15 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-PerceptAI is a screen-driven desktop automation agent for **Windows only**: plain-English instruction → screen perception (EasyOCR + Groq vision) → LLM planning (Groq llama-3.3-70b) → real mouse/keyboard actions (PyAutoGUI + ctypes user32). No DOM access — it works on pixels, so it automates any desktop app. A SaaS layer (FastAPI + Supabase + Next.js dashboard) wraps the engine.
+PerceptAI is a screen-driven desktop automation agent for **Windows only**: plain-English instruction → multi-source perception fused into a world model (Windows UI Automation + EasyOCR + Groq vision + Win32 metadata) → LLM planning (Groq llama-3.3-70b) → real mouse/keyboard actions (PyAutoGUI + ctypes user32). Pixels are the floor (any app automates), structured sources raise fidelity when present. A SaaS layer (FastAPI + Supabase + Next.js dashboard) wraps the engine.
 
 Running the engine or API locally **takes over the real mouse/keyboard and manipulates live windows**. Don't casually run demos, `session.run(...)`, or the eval harness to "test" — they click on the user's actual screen. PyAutoGUI failsafe: slam cursor to a corner to abort. Unit tests (`tests/`) use injected fakes and are always safe to run.
 
 ## Product philosophy
 
-- **Pixels, not DOM.** Browser-Use covers websites; PerceptAI targets the ~75% of work in desktop apps, legacy software, and tools with no API. Never add app-specific integrations or special cases (no hardcoded Notepad/Chrome logic) — the generality is the product.
+- **One world model, many sources.** The planner never sees raw OCR or knows which provider observed what — it receives a fused, confidence-scored `WorldState`. Pixels (OCR) keep it universal; UIA/DOM-class sources add fidelity where available. Never add app-specific integrations or special cases (no hardcoded Notepad/Chrome logic) — the generality is the product.
 - **Plain English in, structured outcomes out.** Users receive `TaskResult` (status, summary, findings, verification, confidence) — execution logs are for developers.
-- **Latency is a feature.** OCR-only perception (`perceive_fast`) is the default; the vision-LLM call is an escalation. Prefer the cheap path first everywhere.
+- **Latency is a feature.** Fast snapshots (free/cheap providers: Win32 metadata, UIA, OCR) are the default; the vision-LLM provider runs only on full-mode escalation. Prefer the cheap path first everywhere.
+- **Confidence is honest.** Every observation carries source-weighted confidence; corroboration compounds it (noisy-OR, capped at 0.99); uncertainty propagates to the planner, events and reports. Never fake certainty.
 - **Self-healing over failing, honest failure over blind action.** Failed steps are diagnosed and retried, then replanned from the live screen. There are deliberately no blind fallbacks (e.g. no clicking screen-center when an element isn't found).
 - **Outcomes, not steps.** Success is measured by whether the user's business outcome was achieved (eval checkers inspect real OS state), never by step/click counts.
 
@@ -28,6 +29,7 @@ python examples/natural_language_demo.py      # interactive CLI (controls the re
 # Evaluation harness (controls the real screen — run deliberately)
 python -m evals.harness run --suite evals/suite_core.json --label <name>
 python -m evals.harness compare evals/reports/a.json evals/reports/b.json
+python -m evals.perception_bench --snapshots 3   # perception-only benchmark: read-only (screenshots + UIA), no input
 
 # API backend (from api/, has its own .env with Supabase/JWT/Groq keys)
 pip install -r api/requirements.txt
@@ -53,13 +55,16 @@ Module map (dependencies flow downward, no cycles):
 - `streaming.py` — the only place that knows the dashboard SSE wire schema (`to_legacy_sse`, `legacy_steps`). Pinned by `tests/test_streaming.py`.
 - `config.py` — EngineConfig: all budgets, models, settle delays, paths. Every agentic loop must be budgeted (max_steps, max_replans, max_healing_attempts, find_retries).
 - `llm.py` — single Groq wrapper; JSON fence-stripping/permissive parsing lives ONLY here. Malformed LLM replies degrade, never raise, in the execution path.
-- `perception.py` / `actions.py` / `oscontrol.py` — services. Actions are dumb primitives (no focus logic). App launching is generic: PATH → App Paths registry → Win+R; no hardcoded exe paths. Screenshots go to the session workspace (`%TEMP%/perceptai/<id>/`).
+- `providers.py` — the perception plugin surface: `PerceptionProvider` (name, source, cost tier, `available()`, `observe(frame)`). Built-ins: `WindowMetadataProvider` (Win32: windows/z-order/focus/cursor/screen), `UiaProvider` (Windows UI Automation tree of the foreground window, hard-budgeted), `OcrProvider` (wraps PerceptionService, normalizes coords to input space), `VisionProvider` (Groq vision, expensive tier, position-less observations). Providers contribute observations, never decisions; new sources (DOM, macOS, mobile, remote) are new providers — the planner never changes.
+- `fusion.py` — FusionEngine: merges multi-source observations into deduped `UIElement`s (spatial IoU/containment + text-similarity clustering), picks role/name/bbox by source trust, combines confidence noisy-OR (capped 0.99). Pure logic, deterministic.
+- `world.py` — WorldModel: orchestrates providers under budgets (fast vs full escalation), builds `WorldState`, computes `WorldDiff` between snapshots, resolves element queries (`find` — no blind guesses), serializes the confidence-annotated planner view (`describe`). The ONLY perception surface the runtime consumes.
+- `perception.py` / `actions.py` / `oscontrol.py` — primitives. PerceptionService = screenshots + OCR only (one provider's substrate, not the perception system). Actions are dumb primitives (no focus logic). App launching is generic: PATH → App Paths registry → Win+R; no hardcoded exe paths. Screenshots go to the session workspace (`%TEMP%/perceptai/<id>/`).
 - `planner.py` — incremental: plans ≤`max_plan_steps` from the live screen; re-invoked after every launch/navigation and after unhealed failures. Goal-aware (objectives, known facts); returns `[]` to signal "goal achieved". Plans are hypotheses, not scripts.
 - `goal.py` / `evidence.py` / `reporting.py` — the cognitive layer. GoalAnalyzer turns the instruction into a `GoalSpec` (deliverable, entities, objectives, completion criteria) BEFORE planning; EvidenceCollector turns screen observations into typed, sourced `Evidence`; ReportBuilder assembles the `TaskReport` deliverable, LLM-composing narrative **from collected evidence only** (grounded — never invents facts). All three degrade gracefully on LLM failure; execution is never blocked by cognition.
-- `healer.py` / `verification.py` — LLM failure diagnosis; verification derives checks from executed steps + LLM-judges the goal's completion criteria against evidence (critical for report/data goals, advisory for action goals). Observe-only: never focuses/changes OS state.
-- `memory.py` — MemoryStore (SQLite at `~/.perceptai/memory.db`): interface maps, task patterns, and the `knowledge` table (evidence persisted as entity-attribute-value, recalled by goal entities to seed future tasks).
+- `healer.py` / `verification.py` — LLM failure diagnosis from the world view + what changed since the failure (failure types include modal_dialog, loading, focus_lost); verification derives checks from executed steps, compares first-vs-last WorldState ("did the world change?" — advisory), and LLM-judges the goal's completion criteria against evidence (critical for report/data goals, advisory for action goals). Observe-only: never focuses/changes OS state.
+- `memory.py` — MemoryStore (SQLite at `~/.perceptai/memory.db`): interface maps (now fed with fused elements + roles; `recall_interface` feeds known controls into the planner's world view — informs planning, never positions a click), task patterns, and the `knowledge` table (evidence persisted as entity-attribute-value, recalled by goal entities to seed future tasks).
 
-Execution loop semantics: understand goal (+ recall knowledge) → perceive → plan → per step (ensure focus → act → emit events) → on failure: heal (bounded) → if unhealed: replan from live screen → if that fails: stop with FAILED. After open_app/navigate_url: settle, then replan. When the queue empties and the goal has completion criteria: continuation replan until the planner returns `[]` (goal achieved) or budgets exhaust. Final status: FAILED (a step failed), COMPLETED (verification passed), or UNVERIFIED (steps ok, verification couldn't confirm).
+Execution loop semantics: understand goal (+ recall knowledge) → world snapshot → plan → per step (ensure focus → act → emit events) → on failure: heal (bounded) → if unhealed: replan from live screen → if that fails: stop with FAILED. After open_app/navigate_url: settle, then replan. When the queue empties and the goal has completion criteria: continuation replan until the planner returns `[]` (goal achieved) or budgets exhaust. Final status: FAILED (a step failed), COMPLETED (verification passed), or UNVERIFIED (steps ok, verification couldn't confirm).
 
 Working memory: `TaskContext` is accumulate-only (evidence, sources, notes, facts) — never overwrite, always append. `TaskResult.report` is the business deliverable (executive summary, key findings, evidence, confidence, sources, next actions); the dashboard renders it from `sessions.result`.
 

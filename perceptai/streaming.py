@@ -23,6 +23,22 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
     if event.type == EventType.GOAL_ANALYZED:
         return {"type": "log", "message": f"Goal understood: {p.get('intent', '')}"}
 
+    if event.type == EventType.WORLD_SNAPSHOT:
+        return {
+            "type": "world",
+            "mode": p.get("mode", "fast"),
+            "focused_window": p.get("focused_window", ""),
+            "windows": p.get("windows", 0),
+            "elements": p.get("elements", 0),
+            "interactive": p.get("interactive", 0),
+            "confidence": p.get("confidence", 0.0),
+            "providers": p.get("providers", []),
+            "top_elements": p.get("top_elements", []),
+            "changed": p.get("changed", False),
+            "summary": p.get("summary", ""),
+            "timestamp": event.timestamp,
+        }
+
     if event.type == EventType.EVIDENCE_COLLECTED:
         labels = ", ".join(p.get("labels", [])[:5])
         return {"type": "log", "message": f"Collected {p.get('count', 0)} evidence item(s): {labels}"}

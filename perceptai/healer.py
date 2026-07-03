@@ -15,27 +15,32 @@ class Healer:
         self._config = config
         self._llm = llm
 
-    def diagnose(self, failed_step: Step, error_info: str, screen_text: str) -> HealingPlan:
+    def diagnose(self, failed_step: Step, error_info: str, world_view: str) -> HealingPlan:
         step_json = json.dumps(
             {"action": failed_step.action.value, "description": failed_step.description, **failed_step.params},
             indent=2,
         )
         prompt = f"""You are an AI agent debugger for Windows automation.
 
-A step in an automation task just failed.
+A step in an automation task just failed. First understand WHY it failed,
+then plan the recovery.
 
 Failed step:
 {step_json}
 
 Error info: {error_info}
 
-Currently visible on screen (OCR):
-{screen_text}
+Current world state (fused multi-source perception, with what changed since the failure):
+{world_view}
+
+Common causes to consider: the element disappeared or moved, the window
+changed or closed, a modal dialog or permission prompt is blocking the
+screen, the app is still loading, keyboard focus moved elsewhere.
 
 Diagnose what went wrong and return ONLY valid JSON:
 {{
   "diagnosis": "what went wrong in one sentence",
-  "failure_type": "element_not_found|app_not_open|wrong_screen|timeout|other",
+  "failure_type": "element_not_found|app_not_open|wrong_screen|modal_dialog|loading|focus_lost|timeout|other",
   "recovery_steps": [
     {{
       "step_number": 1,

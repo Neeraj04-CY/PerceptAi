@@ -30,6 +30,204 @@ def _plain(value: Any) -> Any:
     return value
 
 
+# --------------------------------------------------------------- perception
+
+class SourceType(str, Enum):
+    """Where an observation came from. Providers contribute observations,
+    never decisions — the fusion engine arbitrates between sources."""
+    OS_METADATA = "os"
+    UIA = "uia"
+    OCR = "ocr"
+    VISION = "vision"
+    DOM = "dom"
+    ACCESSIBILITY = "accessibility"
+    CLIPBOARD = "clipboard"
+    MEMORY = "memory"
+    CUSTOM = "custom"
+
+
+# Roles a user can act on. Fusion promotes elements to interactive when any
+# source assigns one of these roles (or reports the element as clickable).
+INTERACTIVE_ROLES = frozenset({
+    "button", "link", "edit", "combo_box", "check_box", "radio_button",
+    "menu_item", "menu", "tab", "list_item", "tree_item", "slider",
+    "split_button", "spinner", "dropdown", "input", "icon",
+})
+
+# Roles that describe the environment rather than actionable elements.
+# The world builder consumes these directly; they never become UIElements.
+STRUCTURAL_ROLES = frozenset({"window", "cursor", "screen", "process"})
+
+
+@dataclass(frozen=True)
+class BoundingBox:
+    """Pixel rectangle in the virtual-screen input coordinate space —
+    the same space mouse actions use. Providers normalize into it."""
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+    @classmethod
+    def around(cls, x: int, y: int, radius: int = 2) -> "BoundingBox":
+        return cls(x - radius, y - radius, x + radius, y + radius)
+
+    @property
+    def valid(self) -> bool:
+        return self.right > self.left and self.bottom > self.top
+
+    @property
+    def width(self) -> int:
+        return max(0, self.right - self.left)
+
+    @property
+    def height(self) -> int:
+        return max(0, self.bottom - self.top)
+
+    @property
+    def area(self) -> int:
+        return self.width * self.height
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return ((self.left + self.right) // 2, (self.top + self.bottom) // 2)
+
+    def contains(self, x: int, y: int) -> bool:
+        return self.left <= x <= self.right and self.top <= y <= self.bottom
+
+    def iou(self, other: "BoundingBox") -> float:
+        ix = min(self.right, other.right) - max(self.left, other.left)
+        iy = min(self.bottom, other.bottom) - max(self.top, other.top)
+        if ix <= 0 or iy <= 0:
+            return 0.0
+        intersection = ix * iy
+        union = self.area + other.area - intersection
+        return intersection / union if union > 0 else 0.0
+
+    def scaled(self, fx: float, fy: float) -> "BoundingBox":
+        return BoundingBox(
+            int(self.left * fx), int(self.top * fy),
+            int(self.right * fx), int(self.bottom * fy),
+        )
+
+
+@dataclass
+class Observation:
+    """One raw sighting from one perception provider. Observations are
+    evidence about the world, not conclusions — fusion merges them."""
+    source: SourceType
+    role: str = "text"
+    text: str = ""
+    bbox: Optional[BoundingBox] = None
+    confidence: float = 1.0  # provider-native score, 0..1
+    window: str = ""  # owning window title when known
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WindowInfo:
+    title: str
+    focused: bool = False
+    z_order: int = 0
+    bbox: Optional[BoundingBox] = None
+    process: str = ""
+    minimized: bool = False
+
+
+@dataclass
+class UIElement:
+    """A fused, deduplicated element of the world model. The best version
+    of every observation — the planner never sees per-source duplicates."""
+    id: str
+    role: str
+    name: str
+    bbox: Optional[BoundingBox] = None
+    confidence: float = 0.0  # fused confidence, 0..1
+    sources: list[str] = field(default_factory=list)
+    interactive: bool = False
+    enabled: bool = True
+    focused: bool = False
+    value: str = ""
+    window: str = ""
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def has_position(self) -> bool:
+        return self.bbox is not None
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return self.bbox.center if self.bbox is not None else (-1, -1)
+
+
+@dataclass
+class ProviderReport:
+    """Health and cost record for one provider in one snapshot."""
+    name: str
+    source: str
+    ok: bool = True
+    observations: int = 0
+    latency_ms: float = 0.0
+    error: str = ""
+
+
+@dataclass
+class WorldState:
+    """The unified environment the planner reasons over. One world model,
+    regardless of which providers contributed."""
+    timestamp: float = 0.0
+    mode: str = "fast"  # fast (cheap providers) | full (+ vision escalation)
+    windows: list[WindowInfo] = field(default_factory=list)
+    elements: list[UIElement] = field(default_factory=list)
+    focused_window: str = ""
+    focused_element_id: str = ""
+    cursor: tuple[int, int] = (-1, -1)
+    page_context: str = ""
+    screenshot_path: str = ""
+    providers: list[ProviderReport] = field(default_factory=list)
+    confidence: float = 0.0  # overall perception confidence, 0..1
+
+    @property
+    def screen_text(self) -> str:
+        """Flattened visible text, for LLM extraction and diffing."""
+        seen: set[str] = set()
+        lines: list[str] = []
+        for el in self.elements:
+            for chunk in (el.name, el.value):
+                if chunk and chunk not in seen:
+                    seen.add(chunk)
+                    lines.append(chunk)
+        return "\n".join(lines)
+
+    @property
+    def interactive_elements(self) -> list[UIElement]:
+        return [el for el in self.elements if el.interactive]
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class WorldDiff:
+    """What changed between two world states. Verification asks 'did the
+    world change?', not 'did we click?'."""
+    changed: bool = False
+    appeared_windows: list[str] = field(default_factory=list)
+    disappeared_windows: list[str] = field(default_factory=list)
+    focus_before: str = ""
+    focus_after: str = ""
+    focus_changed: bool = False
+    elements_added: int = 0
+    elements_removed: int = 0
+    text_similarity: float = 1.0
+    summary: str = ""
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+# ------------------------------------------------------------------- tasks
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"

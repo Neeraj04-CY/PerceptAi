@@ -12,8 +12,12 @@ from .config import EngineConfig
 from .contracts import (
     ActionType,
     Artifact,
+    BoundingBox,
     Evidence,
     GoalSpec,
+    Observation,
+    ProviderReport,
+    SourceType,
     Step,
     StepResult,
     StepStatus,
@@ -22,12 +26,18 @@ from .contracts import (
     TaskReport,
     TaskResult,
     TaskStatus,
+    UIElement,
     VerificationResult,
+    WindowInfo,
+    WorldDiff,
+    WorldState,
 )
 from .events import EventBus, EventType, TaskEvent
+from .providers import FrameContext, PerceptionProvider
 from .session import AgentSession
+from .world import WorldModel
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "AgentSession",
@@ -48,4 +58,16 @@ __all__ = [
     "TaskReport",
     "Artifact",
     "VerificationResult",
+    # Universal Perception Layer
+    "WorldModel",
+    "WorldState",
+    "WorldDiff",
+    "UIElement",
+    "WindowInfo",
+    "Observation",
+    "SourceType",
+    "BoundingBox",
+    "ProviderReport",
+    "PerceptionProvider",
+    "FrameContext",
 ]

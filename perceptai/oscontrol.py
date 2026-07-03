@@ -24,6 +24,58 @@ SHELL_WINDOW_TITLES = (
 
 
 class WindowManager:
+    def enumerate(self) -> list[dict]:
+        """Rich window metadata: title, rect, z-order (front to back),
+        focus, minimized state and owning process. Read-only."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        foreground = user32.GetForegroundWindow()
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        results: list[dict] = []
+        process_names: dict[int, str] = {}
+
+        def process_name(hwnd) -> str:
+            try:
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value not in process_names:
+                    import psutil
+                    process_names[pid.value] = psutil.Process(pid.value).name()
+                return process_names[pid.value]
+            except Exception:
+                return ""
+
+        def callback(hwnd, lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buff = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buff, length + 1)
+            title = buff.value
+            lower = title.lower()
+            if any(shell in lower for shell in SHELL_WINDOW_TITLES):
+                return True
+            rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            results.append(
+                {
+                    "title": title,
+                    "rect": (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)),
+                    "z_order": len(results),  # EnumWindows yields front-to-back
+                    "focused": hwnd == foreground,
+                    "minimized": bool(user32.IsIconic(hwnd)),
+                    "process": process_name(hwnd),
+                }
+            )
+            return True
+
+        user32.EnumWindows(EnumWindowsProc(callback), 0)
+        return results
+
     def list_windows(self) -> list[str]:
         import ctypes
 
