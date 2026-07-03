@@ -1,257 +1,217 @@
+"""Session-scoped screen perception.
+
+PerceptionService owns its screenshot workspace and cache — two sessions
+never share mutable state. The only process-level shared resource is the
+EasyOCR model: its weights are immutable and expensive (~10s load), so
+they are cached once per process behind a lock.
+"""
+from __future__ import annotations
+
 import base64
-import json
+import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from PIL import ImageGrab, Image
-import numpy as np
-import easyocr
-from groq import Groq
-from .config import get_api_key
+from typing import Any, Optional
 
-# Absolute path for temp screenshot — works from any directory
-TEMP_SCREENSHOT = str(Path(__file__).parent.parent / "temp_screen.png")
+from .config import EngineConfig
+from .llm import LLMClient
 
-# Global instances — loaded once per session
-_reader = None
-_client = None
-_fast_cache = {
-    "timestamp": 0.0,
-    "region": None,
-    "result": None,
-}
+_reader_lock = threading.Lock()
+_shared_reader = None  # immutable model weights, process-level by design
 
 
-def get_reader():
-    """Lazy load EasyOCR to avoid repeated model loads."""
-    global _reader
-    if _reader is None:
-        print("  Loading perception engine...")
-        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        print("  Perception engine ready.")
-    return _reader
+def _get_reader():
+    global _shared_reader
+    with _reader_lock:
+        if _shared_reader is None:
+            import easyocr  # lazy: heavy import
+            _shared_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+        return _shared_reader
 
 
-def get_client():
-    """Lazy load Groq client once per session."""
-    global _client
-    if _client is None:
-        _client = Groq(api_key=get_api_key())
-    return _client
+@dataclass
+class TextBlock:
+    text: str
+    confidence: float
+    x: int
+    y: int
+    top_left: tuple[int, int] = (0, 0)
+    bottom_right: tuple[int, int] = (0, 0)
 
 
-def capture_screen(region=None):
-    screenshot = ImageGrab.grab(bbox=region)
-    screenshot.save(TEMP_SCREENSHOT)
-    return screenshot
+@dataclass
+class ElementMatch:
+    text: str
+    x: int
+    y: int
+    confidence: float = 0.0
+    kind: str = "text"
+
+    @property
+    def has_position(self) -> bool:
+        return self.x > 0 and self.y > 0
 
 
-def encode_image(image_path):
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
+@dataclass
+class Perception:
+    text_blocks: list[TextBlock] = field(default_factory=list)
+    vision_elements: list[dict] = field(default_factory=list)
+    page_context: str = "unknown"
+    screenshot_path: str = ""
+    timestamp: float = 0.0
+    mode: str = "fast"
+
+    @property
+    def screen_text(self) -> str:
+        return "\n".join(b.text for b in self.text_blocks)
 
 
-def get_element_center(bbox):
-    top_left = bbox[0]
-    bottom_right = bbox[2]
-    x = int((top_left[0] + bottom_right[0]) / 2)
-    y = int((top_left[1] + bottom_right[1]) / 2)
-    return x, y
-
-
-def _prepare_ocr_image(image, max_side=960):
-    """Downscale image for faster OCR while preserving aspect ratio."""
-    width, height = image.size
-    scale = max(width, height) / float(max_side)
-    if scale <= 1:
-        return image
-    new_size = (int(width / scale), int(height / scale))
-    return image.resize(new_size, Image.BILINEAR)
-
-
-def perceive(region=None):
-    screenshot = capture_screen(region)
-
-    ocr_image = _prepare_ocr_image(screenshot)
-    ocr_results = get_reader().readtext(np.array(ocr_image))
-
-    text_blocks = []
-    ocr_map = {}
-
-    for result in ocr_results:
-        bbox, text, confidence = result
-        x, y = get_element_center(bbox)
-        block = {
-            "text": text,
-            "confidence": round(confidence, 3),
-            "position": {"x": x, "y": y},
-            "bounds": {
-                "top_left": [int(bbox[0][0]), int(bbox[0][1])],
-                "bottom_right": [int(bbox[2][0]), int(bbox[2][1])],
-            },
-        }
-        text_blocks.append(block)
-        ocr_map[text.lower().strip()] = {"x": x, "y": y}
-
-    image_data = encode_image(TEMP_SCREENSHOT)
-
-    response = get_client().chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{image_data}"
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": """Analyze this screenshot. Return ONLY valid JSON:
-{
-  "elements": [
-    {
-      "id": "el_001",
-      "type": "button|input|dropdown|text|image|icon|table|link|menu",
-      "text": "exact visible text of this element",
-      "clickable": true,
-      "description": "what this element does"
-    }
-  ],
-  "page_context": "what app or page is this",
-  "primary_action": "main thing user can do here"
-}
-IMPORTANT: Use exact visible text. Return ONLY JSON.""",
-                    },
-                ],
-            }
-        ],
-        max_tokens=1500,
-    )
-
-    raw = response.choices[0].message.content.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
-
-    try:
-        vision_data = json.loads(raw)
-    except json.JSONDecodeError:
-        vision_data = {"elements": [], "raw_response": raw}
-
-    # Merge OCR coordinates into vision elements
-    if "elements" in vision_data:
-        for element in vision_data["elements"]:
-            element_text = element.get("text", "").lower().strip()
-
-            # Direct match
-            if element_text in ocr_map:
-                element["position"] = ocr_map[element_text]
-                element["confidence"] = next(
-                    (
-                        block["confidence"]
-                        for block in text_blocks
-                        if block["text"].lower().strip() == element_text
-                    ),
-                    0.0,
-                )
-            else:
-                # Partial match
-                for ocr_text, pos in ocr_map.items():
-                    if element_text in ocr_text or ocr_text in element_text:
-                        element["position"] = pos
-                        element["confidence"] = next(
-                            (
-                                block["confidence"]
-                                for block in text_blocks
-                                if block["text"].lower().strip() == ocr_text
-                            ),
-                            0.0,
-                        )
-                        break
-                else:
-                    element["position"] = {"x": -1, "y": -1}
-                    element["confidence"] = 0.0
-
-    return {
-        "text_blocks": text_blocks,
-        "vision": vision_data,
-        "screenshot_path": TEMP_SCREENSHOT,
-        "timestamp": time.time(),
-    }
-
-
-def perceive_fast(region=None, force_refresh=False):
-    """
-    OCR-only perception. Use for simple element finding tasks.
-    No Vision API call.
-    """
-    now = time.time()
-    if (
-        not force_refresh
-        and _fast_cache["result"] is not None
-        and _fast_cache["region"] == region
-        and (now - _fast_cache["timestamp"]) < 0.8
-    ):
-        return _fast_cache["result"]
-
-    screenshot = capture_screen(region)
-
-    ocr_image = _prepare_ocr_image(screenshot)
-    ocr_results = get_reader().readtext(np.array(ocr_image))
-
-    text_blocks = []
-    ocr_map = {}
-
-    for result in ocr_results:
-        bbox, text, confidence = result
-        x, y = get_element_center(bbox)
-        block = {
-            "text": text,
-            "confidence": round(confidence, 3),
-            "position": {"x": x, "y": y},
-            "bounds": {
-                "top_left": [int(bbox[0][0]), int(bbox[0][1])],
-                "bottom_right": [int(bbox[2][0]), int(bbox[2][1])],
-            },
-        }
-        text_blocks.append(block)
-        ocr_map[text.lower().strip()] = {"x": x, "y": y}
-
-    result = {
-        "text_blocks": text_blocks,
-        "vision": {"elements": [], "page_context": "unknown"},
-        "screenshot_path": TEMP_SCREENSHOT,
-        "timestamp": now,
-        "mode": "fast",
-    }
-
-    _fast_cache["timestamp"] = now
-    _fast_cache["region"] = region
-    _fast_cache["result"] = result
-
-    return result
-
-
-def find_element(perception_result, query):
-    """Find a specific element by text or description"""
-    query_lower = query.lower()
-    elements = perception_result.get("vision", {}).get("elements", [])
-
-    for element in elements:
-        text = element.get("text", "").lower()
-        desc = element.get("description", "").lower()
-        if query_lower in text or query_lower in desc:
-            return element
-
-    # Also search text blocks
-    for block in perception_result.get("text_blocks", []):
-        if query_lower in block["text"].lower():
-            return {
-                "text": block["text"],
-                "position": block["position"],
-                "confidence": block.get("confidence", 0.0),
-                "type": "text",
-                "clickable": True,
-            }
-
+def find_element(perception: Perception, query: str) -> Optional[ElementMatch]:
+    """Locate an element by (sub)string match against vision elements,
+    then OCR text blocks."""
+    q = query.lower().strip()
+    for el in perception.vision_elements:
+        text = str(el.get("text", "")).lower()
+        desc = str(el.get("description", "")).lower()
+        pos = el.get("position") or {}
+        if (q in text or q in desc) and pos:
+            return ElementMatch(
+                text=str(el.get("text", "")),
+                x=int(pos.get("x", -1)),
+                y=int(pos.get("y", -1)),
+                confidence=float(el.get("confidence", 0.0)),
+                kind=str(el.get("type", "element")),
+            )
+    for block in perception.text_blocks:
+        if q in block.text.lower():
+            return ElementMatch(text=block.text, x=block.x, y=block.y, confidence=block.confidence)
     return None
+
+
+class PerceptionService:
+    def __init__(self, config: EngineConfig, llm: LLMClient, workspace: Path):
+        self._config = config
+        self._llm = llm
+        self._workspace = workspace
+        self._shot_counter = 0
+        self._cache: dict[str, Any] = {"timestamp": 0.0, "region": None, "result": None}
+
+    @property
+    def latest_screenshot(self) -> Optional[Path]:
+        shots = sorted(self._workspace.glob("screen_*.png"))
+        return shots[-1] if shots else None
+
+    def capture(self, region=None) -> Path:
+        from PIL import ImageGrab  # lazy: heavy import
+        self._workspace.mkdir(parents=True, exist_ok=True)
+        self._shot_counter += 1
+        path = self._workspace / f"screen_{self._shot_counter:05d}.png"
+        ImageGrab.grab(bbox=region).save(path)
+        self._prune_screenshots()
+        return path
+
+    def _prune_screenshots(self) -> None:
+        shots = sorted(self._workspace.glob("screen_*.png"))
+        for old in shots[: -self._config.screenshot_keep]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+    def _ocr(self, image_path: Path) -> list[TextBlock]:
+        import numpy as np  # lazy
+        from PIL import Image  # lazy
+
+        image = Image.open(image_path)
+        width, height = image.size
+        scale = max(width, height) / float(self._config.ocr_max_side)
+        if scale > 1:
+            image = image.resize((int(width / scale), int(height / scale)), Image.BILINEAR)
+        with _reader_lock:
+            results = _get_reader().readtext(np.array(image))
+        blocks = []
+        for bbox, text, confidence in results:
+            x = int((bbox[0][0] + bbox[2][0]) / 2)
+            y = int((bbox[0][1] + bbox[2][1]) / 2)
+            blocks.append(
+                TextBlock(
+                    text=text,
+                    confidence=round(float(confidence), 3),
+                    x=x,
+                    y=y,
+                    top_left=(int(bbox[0][0]), int(bbox[0][1])),
+                    bottom_right=(int(bbox[2][0]), int(bbox[2][1])),
+                )
+            )
+        return blocks
+
+    def perceive_fast(self, region=None, force_refresh: bool = False) -> Perception:
+        """OCR-only perception with a short per-session cache."""
+        now = time.time()
+        cached = self._cache["result"]
+        if (
+            not force_refresh
+            and cached is not None
+            and self._cache["region"] == region
+            and (now - self._cache["timestamp"]) < self._config.fast_cache_ttl_s
+        ):
+            return cached
+
+        path = self.capture(region)
+        result = Perception(
+            text_blocks=self._ocr(path),
+            screenshot_path=str(path),
+            timestamp=now,
+            mode="fast",
+        )
+        self._cache.update({"timestamp": now, "region": region, "result": result})
+        return result
+
+    def perceive_full(self, region=None) -> Perception:
+        """OCR + vision-LLM perception. Vision elements are enriched with
+        OCR pixel coordinates by text match; unmatched elements get x=y=-1."""
+        path = self.capture(region)
+        blocks = self._ocr(path)
+        ocr_map = {b.text.lower().strip(): b for b in blocks}
+
+        image_b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
+        prompt = (
+            'Analyze this screenshot. Return ONLY valid JSON:\n'
+            '{"elements": [{"id": "el_001", "type": "button|input|dropdown|text|image|icon|table|link|menu",'
+            ' "text": "exact visible text of this element", "clickable": true,'
+            ' "description": "what this element does"}],'
+            ' "page_context": "what app or page is this",'
+            ' "primary_action": "main thing user can do here"}\n'
+            "IMPORTANT: Use exact visible text. Return ONLY JSON."
+        )
+        parsed, _raw = self._llm.complete_vision_json(image_b64, prompt, self._config.vision_model)
+
+        elements: list[dict] = []
+        page_context = "unknown"
+        if isinstance(parsed, dict):
+            page_context = str(parsed.get("page_context", "unknown"))
+            for el in parsed.get("elements", []) or []:
+                text = str(el.get("text", "")).lower().strip()
+                match = ocr_map.get(text)
+                if match is None:
+                    for ocr_text, block in ocr_map.items():
+                        if text and (text in ocr_text or ocr_text in text):
+                            match = block
+                            break
+                if match is not None:
+                    el["position"] = {"x": match.x, "y": match.y}
+                    el["confidence"] = match.confidence
+                else:
+                    el["position"] = {"x": -1, "y": -1}
+                    el["confidence"] = 0.0
+                elements.append(el)
+
+        return Perception(
+            text_blocks=blocks,
+            vision_elements=elements,
+            page_context=page_context,
+            screenshot_path=str(path),
+            timestamp=time.time(),
+            mode="full",
+        )

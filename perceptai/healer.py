@@ -1,28 +1,36 @@
-import os
+"""Failure diagnosis and recovery planning."""
+from __future__ import annotations
+
 import json
-from groq import Groq
-from dotenv import load_dotenv
 
-load_dotenv()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+from .config import EngineConfig
+from .contracts import HealingPlan, Step
+from .llm import LLMClient
+
+_ACTIONS = "open_app|navigate_url|focus_window|click|type|clear_type|press|wait|scroll|read_screen"
 
 
-def diagnose_failure(failed_step, screen_context, error_info):
-    """
-    When a step fails, understand why and suggest recovery.
-    Returns a recovery plan.
-    """
-    prompt = f"""You are an AI agent debugger for Windows automation.
+class Healer:
+    def __init__(self, config: EngineConfig, llm: LLMClient):
+        self._config = config
+        self._llm = llm
+
+    def diagnose(self, failed_step: Step, error_info: str, screen_text: str) -> HealingPlan:
+        step_json = json.dumps(
+            {"action": failed_step.action.value, "description": failed_step.description, **failed_step.params},
+            indent=2,
+        )
+        prompt = f"""You are an AI agent debugger for Windows automation.
 
 A step in an automation task just failed.
 
 Failed step:
-{json.dumps(failed_step, indent=2)}
+{step_json}
 
 Error info: {error_info}
 
-Current screen elements:
-{screen_context}
+Currently visible on screen (OCR):
+{screen_text}
 
 Diagnose what went wrong and return ONLY valid JSON:
 {{
@@ -32,14 +40,8 @@ Diagnose what went wrong and return ONLY valid JSON:
     {{
       "step_number": 1,
       "description": "what to do to recover",
-      "action": "open_app|navigate_url|focus_window|click|type|press|wait",
-      "app": "",
-      "url": "",
-      "window": "",
-      "find": "",
-      "text": "",
-      "key": "",
-      "wait": 1.0
+      "action": "{_ACTIONS}",
+      "app": "", "url": "", "window": "", "find": "", "text": "", "key": "", "wait": 1.0
     }}
   ],
   "confidence": 0.8
@@ -47,21 +49,25 @@ Diagnose what went wrong and return ONLY valid JSON:
 
 Return ONLY JSON. No explanation."""
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=800,
-    )
+        parsed, _raw = self._llm.complete_json(prompt, self._config.planner_model)
+        if not isinstance(parsed, dict):
+            return HealingPlan(diagnosis="Unknown failure", failure_type="other")
 
-    raw = response.choices[0].message.content.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
+        steps = []
+        for item in parsed.get("recovery_steps", []) or []:
+            if isinstance(item, dict):
+                step = Step.from_planner_dict(item, source="healer")
+                if step is not None:
+                    steps.append(step)
 
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {
-            "diagnosis": "Unknown failure",
-            "failure_type": "other",
-            "recovery_steps": [],
-            "confidence": 0.0,
-        }
+        try:
+            confidence = float(parsed.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        return HealingPlan(
+            diagnosis=str(parsed.get("diagnosis", "")),
+            failure_type=str(parsed.get("failure_type", "other")),
+            steps=steps,
+            confidence=confidence,
+        )
