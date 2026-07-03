@@ -1,11 +1,3 @@
-## Installation
-
-```bash
-pip install perceptai
-```
-
-Get your free Groq API key at console.groq.com
-
 <div align="center">
 
 # PerceptAI
@@ -26,7 +18,7 @@ Get your free Groq API key at console.groq.com
 
 AI agents can browse websites. But **75% of real work happens outside browsers** — in desktop apps, legacy enterprise software, government portals, and tools with zero APIs.
 
-Browser Use works on websites via DOM.  
+Browser Use works on websites via DOM.
 **PerceptAI works on anything with pixels.**
 
 ---
@@ -34,20 +26,18 @@ Browser Use works on websites via DOM.
 ## What It Does
 
 ```python
-from core.perception import perceive, find_element
-from core.planner import plan_task
-from core.agent import PerceptAgent
-from core.os_control import get_open_windows
+from perceptai import AgentSession
 
-# One plain English instruction
-instruction = "open notepad and type Hello from PerceptAI"
+session = AgentSession()
+result = session.run("open notepad and type Hello from PerceptAI")
 
-# PerceptAI handles everything else
-screen = perceive()
-plan = plan_task(instruction, context, windows)
-agent = PerceptAgent(plan["task"])
-agent.run(plan["steps"])
+print(result.status)      # completed | unverified | failed
+print(result.summary)     # human-readable outcome
+print(result.findings)    # structured data extracted from the screen
+print(result.verification.reason)
 ```
+
+One plain-English instruction in. A structured, verified outcome out.
 
 ---
 
@@ -55,24 +45,23 @@ agent.run(plan["steps"])
 
 ```
 Plain English Instruction
-	   ↓
-   Screen Perception
-   (OCR + Vision AI)
-	   ↓
-    AI Task Planner
-   (Groq LLaMA 3.3)
-	   ↓
-   Action Execution
-  (Click, Type, Navigate)
-	   ↓
-	Task Complete
+        ↓
+   Screen Perception          OCR (EasyOCR) + Vision AI (Groq llama-4-scout)
+        ↓
+   Incremental Planning       Groq LLaMA 3.3 plans from the LIVE screen,
+        ↓                     replans after every screen change
+   Action Execution           PyAutoGUI + Windows APIs, focus-tracked
+        ↓
+   Healing & Replanning       failures are diagnosed and recovered, bounded
+        ↓
+   Outcome Verification       real OS state is checked — success is never assumed
+        ↓
+   Structured TaskResult      status · summary · findings · verification · events
 ```
 
-**PERCEIVE** — EasyOCR + Groq Vision reads every element on any screen with real pixel coordinates
-
-**PLAN** — Groq LLaMA 3.3 converts plain English into executable steps
-
-**ACT** — PyAutoGUI executes actions with precision on real screen
+The engine emits one canonical event stream consumed by the CLI, the API's
+SSE endpoint, the dashboard and the database — observability is built in,
+not bolted on.
 
 ---
 
@@ -91,7 +80,7 @@ pip install -r requirements.txt
 # Configure
 echo GROQ_API_KEY=your_key_here > .env
 
-# Run
+# Run (controls your real mouse and keyboard!)
 python examples/natural_language_demo.py
 ```
 
@@ -99,30 +88,42 @@ Get your free Groq API key at [console.groq.com](https://console.groq.com)
 
 ---
 
-## Example Instructions
+## Architecture
 
 ```
-"open notepad and type Hello World"
-"open chrome and go to github.com"  
-"search google for autonomous AI agents"
-"open calculator"
+perceptai/               the engine — ONE execution runtime
+├── session.py           AgentSession: composition root, all state session-scoped
+├── runtime.py           ExecutionEngine: perceive → plan → act → verify loop
+├── contracts.py         typed contracts (Task, TaskResult, Step, Finding, ...)
+├── events.py            canonical event stream (EventBus)
+├── perception.py        OCR + vision perception with pixel coordinates
+├── planner.py           incremental LLM planning from the live screen
+├── healer.py            failure diagnosis and recovery
+├── verification.py      side-effect-free outcome verification
+├── actions.py           input primitives (click, type, press, scroll)
+├── oscontrol.py         generic app launching + window management
+└── memory.py            persistent interface/task memory (SQLite)
+
+api/                     FastAPI SaaS layer (auth, keys, sessions, SSE streaming)
+frontend/                Next.js dashboard
+evals/                   outcome-based evaluation harness + task suites
+tests/                   unit tests (fully faked — safe to run anywhere)
 ```
 
 ---
 
-## Architecture
+## Testing & Evaluation
 
+```bash
+python -m pytest tests/ -q                                    # safe: fakes only
+
+# Live evaluation — controls the real desktop, run deliberately:
+python -m evals.harness run --suite evals/suite_core.json --label mychange
+python -m evals.harness compare evals/reports/before.json evals/reports/mychange.json
 ```
-perceptai/
-├── core/
-│   ├── perception.py    # Screen capture + OCR + Vision AI
-│   ├── action.py        # Click, type, scroll, hotkeys
-│   ├── agent.py         # Autonomous execution loop
-│   ├── planner.py       # Natural language → action steps
-│   └── os_control.py    # App launch, window focus, OS control
-└── examples/
-    └── natural_language_demo.py
-```
+
+Success is measured by **business outcomes** verified against real OS state
+(window exists, text visible on screen, file contents) — never by step counts.
 
 ---
 
@@ -140,18 +141,20 @@ perceptai/
 
 ## Roadmap
 
-- [ ] Cloud API — use PerceptAI without local setup
-- [ ] pip package — `pip install perceptai`
-- [ ] JavaScript SDK
-- [ ] Perception memory cache — 10x speed improvement
-- [ ] Linux + Mac support
-- [ ] Dashboard — session viewer and analytics
+- [x] Unified session-scoped runtime with typed contracts
+- [x] Canonical event stream (CLI / SSE / dashboard / DB from one source)
+- [x] Outcome-based evaluation harness
+- [ ] Memory-first planning (recall interface maps and task patterns)
+- [ ] Additional perception backends (Windows UI Automation, browsers)
+- [ ] Control plane + local runners (cloud API driving user machines)
+- [ ] Workflow composition and scheduled tasks
+- [ ] Structured reports as a first-class deliverable
 
 ---
 
 ## Built By
 
-**Neeraj** — Computer Engineering Student, Maharashtra, India  
+**Neeraj** — Computer Engineering Student, Maharashtra, India
 Building the perception layer the agent ecosystem is missing.
 
 [GitHub](https://github.com/Neeraj04-CY/PerceptAi) • [LinkedIn](https://www.linkedin.com/in/neerajpatil-cs/)
