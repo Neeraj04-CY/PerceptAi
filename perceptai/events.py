@@ -41,6 +41,16 @@ class EventType(str, Enum):
     HYPOTHESIS_RESOLVED = "hypothesis_resolved"  # confirmed or rejected
     RECOVERY_STARTED = "recovery_started"
     RECOVERY_COMPLETED = "recovery_completed"
+    # Mission stream (Chapter 5). The workforce layer emits on the same
+    # canonical bus; task_id carries the mission id, payloads carry work
+    # order ids. Consumers derive mission views, never rebuild them.
+    MISSION_STARTED = "mission_started"
+    MISSION_PLANNED = "mission_planned"
+    MISSION_DECISION = "mission_decision"
+    WORK_DISPATCHED = "work_dispatched"
+    WORK_COMPLETED = "work_completed"
+    EVIDENCE_MERGED = "evidence_merged"
+    MISSION_COMPLETED = "mission_completed"
 
 
 @dataclass

@@ -211,6 +211,135 @@ def fast_config(**overrides) -> EngineConfig:
     return EngineConfig(**defaults)
 
 
+# ------------------------------------------------------------- workforce
+
+class FakeSpecialist:
+    """Scriptable deterministic execution unit for workforce tests.
+
+    `script` maps an objective substring to a dict describing the result:
+    {"outputs": {...}, "evidence": [(label, value, source, confidence)],
+     "fail": bool, "error": str, "latency_s": float}. Unscripted
+    objectives succeed with a generic result."""
+
+    def __init__(self, name: str, capabilities: list[str],
+                 script: dict | None = None, resources: list[str] | None = None,
+                 cost: float = 1.0, confidence: float = 0.8,
+                 fail_all: bool = False, latency_s: float = 0.0,
+                 max_concurrent: int = 1):
+        from .workforce.contracts import SpecialistProfile
+        self.profile = SpecialistProfile(
+            name=name, capabilities=list(capabilities), cost=cost,
+            confidence=confidence, resources=list(resources or []),
+            max_concurrent=max_concurrent, provider="fake",
+        )
+        self.script = script or {}
+        self.fail_all = fail_all
+        self.latency_s = latency_s
+        self.executed: list = []  # WorkOrder objects, in execution order
+
+    def healthy(self) -> bool:
+        return True
+
+    def execute(self, order, ctx):
+        import time as _time
+
+        from .contracts import Evidence as _Evidence
+        from .workforce.contracts import WorkResult, WorkStatus
+        self.executed.append(order)
+        spec = next((v for k, v in self.script.items()
+                     if k.lower() in order.objective.lower()), {})
+        latency = float(spec.get("latency_s", self.latency_s))
+        if latency:
+            _time.sleep(latency)
+        if self.fail_all or spec.get("fail"):
+            return WorkResult(
+                order_id=order.id, specialist=self.profile.name,
+                status=WorkStatus.FAILED,
+                error=str(spec.get("error", "scripted failure")),
+                duration_s=latency, cost=self.profile.cost,
+            )
+        evidence = [
+            _Evidence(kind="text", label=label, value=value,
+                      source=source, confidence=conf)
+            for (label, value, source, conf) in spec.get("evidence", [])
+        ]
+        outputs = dict(spec.get("outputs", {}))
+        for key in order.produces:
+            outputs.setdefault(key, f"{key} from {self.profile.name}")
+        return WorkResult(
+            order_id=order.id, specialist=self.profile.name,
+            status=WorkStatus.COMPLETED,
+            summary=str(spec.get("summary", f"{order.objective} done")),
+            outputs=outputs, evidence=evidence,
+            confidence=float(spec.get("confidence", self.profile.confidence)),
+            duration_s=latency, cost=self.profile.cost,
+        )
+
+
+class ScriptedMissionPlanner:
+    """Returns the given work orders — decomposition without an LLM."""
+
+    def __init__(self, orders: list):
+        self._orders = orders
+        self.calls = 0
+
+    def decompose(self, instruction, goal, capabilities, known_facts=None):
+        import copy
+        self.calls += 1
+        return copy.deepcopy(self._orders)
+
+
+def build_simulated_workforce(
+    orders, specialists, config=None, policy=None, memory=None,
+    experience=None, goal=None,
+):
+    """A fully simulated Workforce plus the captured canonical event
+    stream. FakeSpecialists never touch a session; the runner pool's
+    factory exists only so desktop-resource leases have something to
+    hand out."""
+    from .events import EventBus
+    from .workforce import (
+        MissionPolicy,
+        MissionScheduler,
+        RunnerPool,
+        SpecialistRegistry,
+        Workforce,
+        WorkforceConfig,
+    )
+
+    cfg = config or WorkforceConfig(engine=fast_config(), wait_poll_s=0.01)
+    if experience is None:
+        # Hermetic by default: experience must never touch the real
+        # ~/.perceptai database from a simulated run.
+        import tempfile as _tempfile
+        from pathlib import Path as _Path
+
+        from .workforce import ExperienceStore
+        experience = ExperienceStore(
+            _Path(_tempfile.mkdtemp(prefix="perceptai-sim-")) / "experience.db")
+    registry = SpecialistRegistry()
+    for specialist in specialists:
+        registry.register(specialist)
+    events: list = []
+    bus = EventBus()
+    bus.subscribe(events.append)
+    workforce = Workforce(
+        cfg,
+        events=bus,
+        llm=FakeLLM(),
+        registry=registry,
+        runners=RunnerPool(lambda: None),
+        planner=ScriptedMissionPlanner(orders),
+        scheduler=MissionScheduler(cfg),
+        policy=policy or MissionPolicy(),
+        memory=memory or FakeMemory(),
+        experience=experience,
+        goal_analyzer=ScriptedGoalAnalyzer(goal) if goal is not None else None,
+        discover_plugins=False,
+    )
+    return workforce, events
+
+
 def build_simulated_session(
     plans=None, screens=None, windows=None, healing=None, extractions=None,
     config=None, goal_analyzer=None, memory=None, workspace=None,

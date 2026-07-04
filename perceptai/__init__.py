@@ -7,6 +7,13 @@ Public API:
     session = AgentSession()
     result = session.run("open notepad and type hello")
     print(result.summary)
+
+Mission-level execution (the AI Workforce OS) lives in the subpackage:
+
+    from perceptai.workforce import Workforce
+
+    result = Workforce().run_mission("Research Stripe pricing")
+    print(result.report.executive_summary)
 """
 from .config import EngineConfig
 from .contracts import (
@@ -47,7 +54,7 @@ from .session import AgentSession
 from .strategy import StrategyManager
 from .world import WorldModel
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "AgentSession",
