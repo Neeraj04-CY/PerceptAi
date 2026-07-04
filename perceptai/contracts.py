@@ -226,6 +226,195 @@ class WorldDiff:
         return _plain(self)
 
 
+# --------------------------------------------------------------- reasoning
+
+@dataclass
+class BeliefUpdate:
+    """One evolution step of a belief. Beliefs never overwrite — every
+    confidence change is recorded with its cause, so any run is replayable."""
+    at: str
+    delta: float
+    confidence: float  # confidence AFTER this update
+    reason: str
+    source: str = ""  # world | action | evidence | verification | memory
+
+
+@dataclass
+class Belief:
+    """Something the agent currently holds true about the task, with
+    honest confidence. Supporting evidence raises it (noisy-OR);
+    contradictions lower it. Keyed by (kind, subject) in the BeliefState."""
+    id: str
+    statement: str  # "Notepad window is open"
+    kind: str  # window_open | action_effect | fact | goal | other
+    subject: str = ""
+    confidence: float = 0.0
+    supports: int = 0
+    contradictions: int = 0
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+    history: list[BeliefUpdate] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class UncertaintySignal:
+    """One concrete reason the agent is unsure. Signals are typed so the
+    decision engine can act on them (observe again, escalate perception)."""
+    kind: str  # low_perception_confidence | provider_failed | ambiguous_elements |
+    #            no_change_after_action | slow_provider | missing_window | contradicted_belief
+    detail: str
+    severity: float  # 0..1
+
+
+@dataclass
+class Hypothesis:
+    """A candidate explanation for a failure or a surprise. Multiple
+    hypotheses stay alive until evidence resolves them — the agent never
+    assumes the first explanation is the only one."""
+    id: str
+    subject: str  # what it explains, e.g. "click 'Submit' failed"
+    explanation: str
+    kind: str  # modal_dialog | loading | focus_lost | window_changed | element_renamed |
+    #            wrong_app | app_not_open | element_not_found | other
+    probability: float = 0.0
+    status: str = "open"  # open | confirmed | rejected
+    source: str = "signals"  # signals (deterministic) | llm
+    recovery_steps: list[Step] = field(default_factory=list)
+    evidence_for: list[str] = field(default_factory=list)
+    evidence_against: list[str] = field(default_factory=list)
+    created_at: str = field(default_factory=utc_now_iso)
+    resolved_at: str = ""
+    resolution_reason: str = ""
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class ProgressEstimate:
+    """Estimated BUSINESS progress toward the goal — derived from beliefs
+    and evidence coverage of objectives/criteria, never from step counts."""
+    completion: float = 0.0  # 0..1
+    confidence: float = 0.0  # how sure the estimate itself is
+    objectives_total: int = 0
+    objectives_met: int = 0
+    criteria_total: int = 0
+    criteria_supported: int = 0
+    remaining_work: str = ""
+    expected_remaining_steps: int = 0
+    expected_remaining_s: float = 0.0
+    risk: float = 0.0  # 0..1 estimated risk of failing the task
+    stalled_cycles: int = 0  # consecutive cycles without progress movement
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class BudgetSnapshot:
+    """Unified view of every execution budget. Pressure is the tightest
+    individual budget (0 = untouched, 1 = exhausted)."""
+    steps_used: int = 0
+    steps_max: int = 0
+    replans_used: int = 0
+    replans_max: int = 0
+    recoveries_used: int = 0
+    recoveries_max: int = 0
+    llm_calls_used: int = 0
+    llm_calls_max: int = 0
+    vision_calls_used: int = 0
+    vision_calls_max: int = 0
+    elapsed_s: float = 0.0
+    time_max_s: float = 0.0
+    pressure: float = 0.0
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+class DecisionType(str, Enum):
+    CONTINUE = "continue"  # execute the next queued step
+    OBSERVE = "observe"  # take a fresh world snapshot before acting
+    ESCALATE_PERCEPTION = "escalate_perception"  # full-mode (vision) snapshot
+    VERIFY = "verify"  # reconcile beliefs against a fresh observation
+    REPLAN = "replan"
+    RECOVER = "recover"
+    FINISH = "finish"
+    ABORT = "abort"
+    NEED_USER = "need_user"  # blocked on something only the user can decide
+
+
+@dataclass
+class Decision:
+    """One reasoning-cycle verdict, with the factors that produced it.
+    Decisions are data, not control flow — every one is emitted, logged
+    and replayable."""
+    type: DecisionType
+    reason: str
+    factors: dict[str, Any] = field(default_factory=dict)
+    made_at: str = field(default_factory=utc_now_iso)
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class StrategyProfile:
+    """A reusable execution posture. Strategies tune HOW the one runtime
+    behaves (observation cadence, verification frequency, escalation
+    appetite, planner guidance) — they never add a second execution path."""
+    name: str
+    description: str = ""
+    planning_guidance: str = ""  # appended to the planner prompt
+    observe_after_steps: bool = False  # observe after every state-changing step
+    verify_step_interval: int = 3  # baseline steps between belief verifications
+    evidence_priority: float = 0.5  # 0..1: how aggressively to collect evidence
+    perception_escalation: str = "normal"  # eager | normal | reluctant
+    uncertainty_tolerance: float = 0.65  # above this, prefer observing over acting
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class ConstraintVerdict:
+    allowed: bool
+    constraint: str = ""
+    reason: str = ""
+
+
+@dataclass
+class RecoveryPlan:
+    """The considered response to a failure: every live hypothesis, the
+    one chosen, and the recovery steps it grounds. Alternatives stay open
+    until evidence resolves them."""
+    subject: str
+    hypotheses: list[Hypothesis] = field(default_factory=list)
+    chosen: Optional[Hypothesis] = None
+    steps: list[Step] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class RecoveryOutcome:
+    """What one recovery attempt actually achieved — measured, not assumed."""
+    recovered: bool
+    hypothesis_kind: str = ""
+    hypothesis_explanation: str = ""
+    steps_executed: int = 0
+    world_changed: bool = False
+    detail: str = ""
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
 # ------------------------------------------------------------------- tasks
 
 class TaskStatus(str, Enum):
@@ -324,6 +513,10 @@ class HealingPlan:
     failure_type: str = "other"
     steps: list[Step] = field(default_factory=list)
     confidence: float = 0.0
+    # Ranked alternative explanations from the same diagnosis call. The
+    # recovery layer keeps them alive until disproven — one LLM call,
+    # multiple hypotheses.
+    alternatives: list["HealingPlan"] = field(default_factory=list)
 
 
 @dataclass
@@ -448,6 +641,8 @@ class ExecutionState:
     replans: int = 0
     healings: int = 0
     llm_calls: int = 0
+    vision_escalations: int = 0
+    cycles: int = 0
 
 
 @dataclass

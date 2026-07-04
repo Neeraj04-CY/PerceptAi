@@ -1,14 +1,16 @@
-"""The one execution loop.
+"""The one execution loop — now an adaptive reasoning cycle.
 
-perceive -> plan -> act -> verify, with incremental replanning after
-anything that changes the screen, bounded healing on failure, and a
-replan-from-live-screen escalation when healing fails. Every branch is
-budgeted; every transition emits a canonical event.
+Every iteration asks the reasoning engine for one typed Decision:
+continue, observe, escalate perception, verify, replan, recover, finish
+or abort. The runtime executes decisions; it never overrides them. What
+used to be hardcoded control flow is now data on the event stream —
+every choice carries the factors that produced it and is replayable.
 
-Perception flows exclusively through the world model: the engine never
-reads raw OCR. Every snapshot is a fused, confidence-scored WorldState;
-element lookups, planner context, healing context and verification all
-derive from it.
+Perception flows exclusively through the world model; step outcomes and
+world snapshots feed beliefs; failures spawn multiple hypotheses that
+recovery resolves against measured outcomes. Every branch is budgeted;
+every transition emits a canonical event. LLM calls stay at the plan /
+diagnose / judge boundaries — the reasoning cycle itself is deterministic.
 """
 from __future__ import annotations
 
@@ -20,7 +22,9 @@ from .contracts import (
     ActionOutcome,
     ActionType,
     Artifact,
+    DecisionType,
     ExecutionState,
+    PlannerOutput,
     Step,
     StepResult,
     StepStatus,
@@ -33,6 +37,7 @@ from .contracts import (
     utc_now_iso,
 )
 from .events import EventType
+from .reasoning import ReasoningState
 
 if TYPE_CHECKING:
     from .session import AgentSession
@@ -46,6 +51,7 @@ class ExecutionEngine:
         self._config = session.config
         self._last_world: Optional[WorldState] = None
         self._baseline_world: Optional[WorldState] = None
+        self._exec_state: Optional[ExecutionState] = None
 
     # -------------------------------------------------------- world model
 
@@ -92,64 +98,127 @@ class ExecutionEngine:
         start = time.time()
         context = TaskContext(instruction=task.instruction)
         state = ExecutionState()
+        self._exec_state = state
         executed: list[StepResult] = []
         errors: list[str] = []
 
         self._s.emit(EventType.TASK_STARTED, task, instruction=task.instruction)
 
         self._understand_goal(task, context)
-
-        try:
-            initial = self._plan(task, context, executed, state, source="planner")
-        except Exception as e:
-            return self._finish(task, context, state, executed,
-                                errors=[f"Planning failed: {e}"], started=start)
-
-        if not initial:
-            return self._finish(task, context, state, executed,
-                                errors=["Could not plan task"], started=start)
-
-        self._s.emit(
-            EventType.PLAN_CREATED, task,
-            steps=[{"description": s.description, "action": s.action.value} for s in initial],
+        reasoning = self._s.reasoning
+        rstate = reasoning.begin(
+            context.goal, context,
+            emit=lambda type_, **payload: self._s.emit(type_, task, **payload),
+            started_at=start,
         )
 
+        try:
+            output = self._plan(task, context, executed, state, rstate, source="planner")
+            initial = output.steps if output.ok else []
+            reasoning.record_plan(rstate, initial,
+                                  planner_said_done=output.ok and not output.steps)
+        except Exception as e:
+            return self._finish(task, context, state, executed, rstate,
+                                errors=[f"Planning failed: {e}"], started=start)
+
+        if not initial and not rstate.goal_achieved_signal:
+            return self._finish(task, context, state, executed, rstate,
+                                errors=["Could not plan task"], started=start)
+
+        if initial:
+            self._s.emit(
+                EventType.PLAN_CREATED, task,
+                steps=[{"description": s.description, "action": s.action.value} for s in initial],
+            )
+
         queue = deque(initial)
-        while state.steps_executed < self._config.max_steps:
-            if not queue:
-                continuation = self._continue_toward_goal(task, context, executed, state)
-                if not continuation:
-                    break
-                queue = deque(continuation)
+        while rstate.cycle < self._config.max_cycles:
+            decision = reasoning.decide(
+                rstate, queue_len=len(queue), execution=state, context=context,
+                executed=executed, llm_calls=int(getattr(self._s.llm, "calls", 0) or 0),
+            )
+
+            if decision.type == DecisionType.FINISH:
+                break
+
+            if decision.type in (DecisionType.ABORT, DecisionType.NEED_USER):
+                errors.append(decision.reason)
+                break
+
+            if decision.type == DecisionType.OBSERVE:
+                world = self._perceive(task)
+                reasoning.observe(rstate, world, self._s.world.last_diff)
                 continue
 
-            step = queue.popleft()
-            result = self._run_step(task, step, context, state, executed)
+            if decision.type == DecisionType.ESCALATE_PERCEPTION:
+                state.vision_escalations += 1
+                try:
+                    world = self._perceive(task, mode="full")
+                except Exception:
+                    world = self._perceive(task)
+                reasoning.observe(rstate, world, self._s.world.last_diff)
+                continue
 
-            if not result.ok:
-                if self._heal(task, step, result, context, state, executed):
-                    result.status = StepStatus.HEALED
-                else:
-                    replanned = self._replan(task, context, executed, state, reason="unhealed step failure")
-                    if replanned:
-                        queue = deque(replanned)
-                        continue
-                    errors.append(f"Step {result.index} failed and could not be healed: {result.error}")
-                    break
+            if decision.type == DecisionType.VERIFY:
+                world = self._perceive(task)
+                reasoning.verified(rstate, world, self._s.world.last_diff)
+                continue
 
-            self._remember_interface(state)
+            if decision.type == DecisionType.RECOVER and rstate.failure is not None:
+                failed = rstate.failure
+                if self._recover(task, failed, context, state, rstate, executed):
+                    failed.status = StepStatus.HEALED
+                    reasoning.failure_resolved(rstate)
+                # Unrecovered: the failure stays pending; the next decision
+                # escalates to a replan from the live screen.
+                continue
 
-            if step.action in (ActionType.OPEN_APP, ActionType.NAVIGATE_URL) and result.ok:
-                settle = float(step.params.get("wait", self._config.settle_after_launch_s))
-                self._s.emit(EventType.LOG, task, message=f"Waiting {settle}s for screen to settle...")
-                time.sleep(settle)
-                replanned = self._replan(task, context, executed, state, reason="screen changed after launch")
+            if decision.type == DecisionType.REPLAN:
+                replanned = self._replan(task, context, executed, state, rstate,
+                                         reason=decision.reason)
                 if replanned:
+                    if rstate.failure is not None:
+                        # A replan supersedes the failed step: the goal is
+                        # now pursued along a different path, and the final
+                        # status belongs to verification, not to the detour.
+                        rstate.failure.status = StepStatus.SKIPPED
+                        self._s.emit(EventType.LOG, task,
+                                     message=f"Step {rstate.failure.index} superseded by replan")
+                        reasoning.failure_resolved(rstate)
                     queue = deque(replanned)
+                elif rstate.failure is not None:
+                    errors.append(
+                        f"Step {rstate.failure.index} failed and could not be healed: "
+                        f"{rstate.failure.error}"
+                    )
+                    break
+                # An empty replan marks the planner exhausted; the next
+                # decision finishes explicitly instead of a silent break.
+                continue
 
-            time.sleep(self._config.settle_after_step_s)
+            if decision.type == DecisionType.CONTINUE:
+                if not queue:  # defensive; the decision engine finishes empty queues
+                    break
+                step = queue.popleft()
+                result = self._run_step(task, step, context, state, executed)
+                reasoning.after_step(rstate, result, context)
+                self._remember_interface(state)
 
-        return self._finish(task, context, state, executed, errors=errors, started=start)
+                if result.ok and step.action in (ActionType.OPEN_APP, ActionType.NAVIGATE_URL):
+                    settle = float(step.params.get("wait", self._config.settle_after_launch_s))
+                    self._s.emit(EventType.LOG, task,
+                                 message=f"Waiting {settle}s for screen to settle...")
+                    time.sleep(settle)
+
+                time.sleep(self._config.settle_after_step_s)
+                continue
+
+            # Unknown decision type: stop honestly rather than guess.
+            errors.append(f"Unsupported decision: {decision.type.value}")
+            break
+
+        state.cycles = rstate.cycle
+        return self._finish(task, context, state, executed, rstate, errors=errors, started=start)
 
     # ------------------------------------------------------- understanding
 
@@ -181,23 +250,12 @@ class ExecutionEngine:
             recalled_facts=len(context.notes),
         )
 
-    def _continue_toward_goal(self, task: Task, context: TaskContext,
-                              executed: list[StepResult], state: ExecutionState) -> Optional[list[Step]]:
-        """The plan queue is empty. If the goal defines completion criteria,
-        ask the planner whether more work is needed ([] = goal achieved).
-        Bounded by the existing replan budget."""
-        goal = context.goal
-        if goal is None or not goal.completion_criteria:
-            return None
-        if not executed:  # nothing was ever executed; don't loop on an empty task
-            return None
-        return self._replan(task, context, executed, state, reason="checking goal completion")
-
     # ------------------------------------------------------------ planning
 
     def _plan(self, task: Task, context: TaskContext, executed: list[StepResult],
-              state: ExecutionState, source: str) -> list[Step]:
+              state: ExecutionState, rstate: ReasoningState, source: str) -> PlannerOutput:
         world = self._perceive(task)
+        self._s.reasoning.observe(rstate, world, self._s.world.last_diff, counted=False)
         world_view = self._s.world.describe(world)
         world_view = self._append_known_controls(world_view, state)
         windows = [w.title for w in world.windows]
@@ -206,11 +264,11 @@ class ExecutionEngine:
                 windows = self._s.windows.list_windows()
             except Exception:
                 windows = []
-        output = self._s.planner.plan(
+        return self._s.planner.plan(
             task.instruction, world_view, executed, windows,
             source=source, goal=context.goal, known_facts=context.facts,
+            strategy=rstate.strategy,
         )
-        return output.steps if output.ok else []
 
     def _append_known_controls(self, world_view: str, state: ExecutionState) -> str:
         """Perception memory: controls this app exposed in previous runs.
@@ -229,16 +287,28 @@ class ExecutionEngine:
         return world_view + f"\nControls seen before in {app} (memory): {names}"
 
     def _replan(self, task: Task, context: TaskContext, executed: list[StepResult],
-                state: ExecutionState, reason: str) -> Optional[list[Step]]:
+                state: ExecutionState, rstate: ReasoningState,
+                reason: str) -> Optional[list[Step]]:
         if state.replans >= self._config.max_replans:
             self._s.emit(EventType.LOG, task, message="Replan budget exhausted")
+            self._s.reasoning.record_plan(rstate, [], planner_said_done=False)
             return None
         state.replans += 1
         try:
-            steps = self._plan(task, context, executed, state, source="replan")
+            output = self._plan(task, context, executed, state, rstate, source="replan")
         except Exception as e:
             self._s.emit(EventType.LOG, task, message=f"Replanning failed: {e}")
+            self._s.reasoning.record_plan(rstate, [], planner_said_done=False)
             return None
+
+        if output.ok and not output.steps:
+            # Deliberate planner signal: the goal is already achieved.
+            self._s.reasoning.record_plan(rstate, [], planner_said_done=True)
+            self._s.emit(EventType.LOG, task, message="Planner confirmed the goal is achieved")
+            return None
+
+        steps = output.steps if output.ok else []
+        self._s.reasoning.record_plan(rstate, steps, planner_said_done=False)
         if steps:
             self._s.emit(EventType.REPLANNED, task, count=len(steps), reason=reason)
             return steps
@@ -258,10 +328,17 @@ class ExecutionEngine:
 
         started_at = utc_now_iso()
         t0 = time.time()
-        try:
-            outcome = self._dispatch(task, step, context, state)
-        except Exception as e:
-            outcome = ActionOutcome(ok=False, error=str(e))
+        verdict = self._s.constraints.check_step(step, self._last_world)
+        if not verdict.allowed:
+            outcome = ActionOutcome(
+                ok=False,
+                error=f"constraint {verdict.constraint}: {verdict.reason}",
+            )
+        else:
+            try:
+                outcome = self._dispatch(task, step, context, state)
+            except Exception as e:
+                outcome = ActionOutcome(ok=False, error=str(e))
 
         result = StepResult(
             step=step,
@@ -335,7 +412,7 @@ class ExecutionEngine:
             element = self._find_with_retry(query)
             if element is None:
                 # Deliberate: no blind fallback clicks. Honest failure feeds
-                # healing and replanning; a wrong click can cause real damage.
+                # recovery and replanning; a wrong click can cause real damage.
                 return ActionOutcome(ok=False, error=f"Element '{query}' not found on screen")
             x, y = element.center
             outcome = self._s.actions.click(x, y)
@@ -424,6 +501,8 @@ class ExecutionEngine:
             if attempt == 1:
                 # Escalate to full perception (vision LLM) once.
                 try:
+                    if self._exec_state is not None:
+                        self._exec_state.vision_escalations += 1
                     world = self._s.world.snapshot(mode="full", force_refresh=True)
                     self._last_world = world
                     element = self._s.world.find(world, query)
@@ -448,52 +527,176 @@ class ExecutionEngine:
             return context.latest_extraction
         return text
 
-    # ------------------------------------------------------------- healing
+    # ------------------------------------------------------------ recovery
 
-    def _heal(self, task: Task, step: Step, result: StepResult, context: TaskContext,
-              state: ExecutionState, executed: list[StepResult]) -> bool:
+    def _recover(self, task: Task, failed: StepResult, context: TaskContext,
+                 state: ExecutionState, rstate: ReasoningState,
+                 executed: list[StepResult]) -> bool:
+        """One RECOVER decision: bounded attempts of understand -> choose
+        hypothesis -> act -> measure. Hypotheses rejected in earlier
+        attempts are never chosen again."""
+        step = failed.step
+        reasoning = self._s.reasoning
         for attempt in range(1, self._config.max_healing_attempts + 1):
             if state.steps_executed >= self._config.max_steps:
                 return False
+            if state.healings >= self._config.max_recovery_total:
+                return False
             state.healings += 1
-            self._s.emit(EventType.HEALING_STARTED, task, attempt=attempt, failed_step=step.description)
+            self._s.emit(EventType.HEALING_STARTED, task,
+                         attempt=attempt, failed_step=step.description)
 
             try:
                 world = self._perceive(task)
-                world_view = self._s.world.describe(world)
+                reasoning.observe(rstate, world, self._s.world.last_diff, counted=False)
                 diff = self._s.world.last_diff
+                world_view = self._s.world.describe(world)
                 if diff is not None and diff.summary:
-                    # WHY before HOW: the healer sees what changed since the
-                    # failure (dialog appeared? focus moved? window closed?).
+                    # WHY before HOW: the diagnosis sees what changed since
+                    # the failure (dialog appeared? focus moved? window gone?).
                     world_view += f"\nSince the failed step: {diff.summary}"
-                plan = self._s.healer.diagnose(step, result.error or "step failed", world_view)
+                plan = self._s.recovery.plan(
+                    step, failed.error or "step failed", world_view, world, diff,
+                    expected_window=state.current_window or state.current_app,
+                    rejected_kinds=reasoning.rejected_kinds(rstate),
+                )
             except Exception as e:
-                self._s.emit(EventType.HEALING_RESULT, task, healed=False, diagnosis=f"diagnosis failed: {e}")
+                self._s.emit(EventType.HEALING_RESULT, task, healed=False,
+                             diagnosis=f"diagnosis failed: {e}")
                 continue
 
+            reasoning.record_recovery(rstate, plan, attempt)
             self._s.emit(
-                EventType.HEALING_RESULT, task,
-                healed=False, diagnosis=plan.diagnosis,
-                failure_type=plan.failure_type, confidence=plan.confidence,
-                recovery_steps=len(plan.steps),
+                EventType.HEALING_RESULT, task, healed=False,
+                diagnosis=plan.chosen.explanation if plan.chosen else "no viable recovery",
+                failure_type=plan.chosen.kind if plan.chosen else "unknown",
+                confidence=plan.confidence, recovery_steps=len(plan.steps),
             )
 
-            if plan.steps and plan.confidence > self._config.healing_confidence_threshold:
-                recovered = True
-                for recovery_step in plan.steps:
-                    if state.steps_executed >= self._config.max_steps:
-                        recovered = False
-                        break
-                    recovery_step.source = "healer"  # runtime owns this invariant
-                    r = self._run_step(task, recovery_step, context, state, executed)
+            if not plan.steps:
+                outcome = self._s.recovery.assess(plan, 0, False, False, False)
+                reasoning.record_recovery_outcome(rstate, plan, outcome)
+                time.sleep(1)
+                continue
+
+            all_ok = True
+            steps_run = 0
+            for recovery_step in plan.steps:
+                if state.steps_executed >= self._config.max_steps:
+                    all_ok = False
+                    break
+                recovery_step.source = "healer"  # runtime owns this invariant
+                r = self._run_step(task, recovery_step, context, state, executed)
+                steps_run += 1
+                if not r.ok:
+                    all_ok = False
+                    break
+
+            # Measure the recovery instead of assuming it: the original
+            # failure condition must no longer hold in the fresh world.
+            world_changed = False
+            after: Optional[WorldState] = None
+            try:
+                after = self._perceive(task)
+                reasoning.observe(rstate, after, self._s.world.last_diff, counted=False)
+                world_changed = bool(self._s.world.last_diff and self._s.world.last_diff.changed)
+            except Exception:
+                pass
+            condition_cleared = self._failure_condition_cleared(
+                step, state, after, world_changed
+            )
+
+            outcome = self._s.recovery.assess(
+                plan, steps_run, all_ok, world_changed, condition_cleared
+            )
+
+            if outcome.recovered and not self._plan_redid_original(plan.steps, step):
+                # The cause is fixed but the original intent has not been
+                # executed: retry it. Skipped when the recovery plan already
+                # redid the action — retrying a click can double-submit.
+                if state.steps_executed < self._config.max_steps:
+                    retry = Step(action=step.action,
+                                 description=f"retry: {step.description}",
+                                 params=dict(step.params), source="healer")
+                    r = self._run_step(task, retry, context, state, executed)
                     if not r.ok:
-                        recovered = False
-                        break
-                if recovered:
-                    self._s.emit(EventType.HEALING_RESULT, task, healed=True, diagnosis=plan.diagnosis)
-                    return True
+                        outcome.recovered = False
+                        outcome.detail = "cause addressed but the retried step still fails"
+                        if plan.chosen is not None:
+                            plan.chosen.status = "rejected"
+                            plan.chosen.resolution_reason = outcome.detail
+                            plan.chosen.evidence_against.append(outcome.detail)
+                else:
+                    outcome.recovered = False
+                    outcome.detail = "no step budget left to retry the original step"
+
+            reasoning.record_recovery_outcome(rstate, plan, outcome)
+
+            if outcome.recovered:
+                self._s.emit(EventType.HEALING_RESULT, task, healed=True,
+                             diagnosis=outcome.hypothesis_explanation)
+                return True
             time.sleep(1)
         return False
+
+    @staticmethod
+    def _plan_redid_original(recovery_steps: list[Step], original: Step) -> bool:
+        """Did the recovery plan already perform the failed step's intent?
+        Same action with the same primary parameter counts."""
+        keys = ("find", "text", "key", "app", "url", "window")
+        original_params = {k: str(original.params.get(k, "")).strip().lower()
+                           for k in keys if original.params.get(k)}
+        for step in recovery_steps:
+            if step.action != original.action:
+                continue
+            params = {k: str(step.params.get(k, "")).strip().lower()
+                      for k in keys if step.params.get(k)}
+            if original_params and params == original_params:
+                return True
+        return False
+
+    def _failure_condition_cleared(self, failed_step: Step, state: ExecutionState,
+                                   world: Optional[WorldState],
+                                   world_changed: bool) -> bool:
+        """Is the original failure demonstrably gone? Checkable per action:
+        a missing element must now resolve, a missing window must now
+        exist. When nothing is checkable we fall back to 'did the world
+        change' — and when we could not observe at all, we cannot disprove
+        the recovery, so it stands (verification still owns the verdict)."""
+        if world is None:
+            return True
+        action, params = failed_step.action, failed_step.params
+
+        if action == ActionType.CLICK:
+            query = str(params.get("find", "")).strip()
+            if query:
+                element = self._s.world.find(world, query)
+                return element is not None and element.has_position
+
+        if action == ActionType.OPEN_APP:
+            app = str(params.get("app", "")).strip()
+            if app:
+                return self._window_visible(app, world)
+
+        if action in (ActionType.TYPE, ActionType.CLEAR_TYPE, ActionType.PRESS,
+                      ActionType.FOCUS_WINDOW):
+            target = str(
+                params.get("window") or params.get("app")
+                or state.current_window or state.current_app or ""
+            ).strip()
+            if target:
+                return self._window_visible(target, world)
+
+        return world_changed
+
+    def _window_visible(self, keyword: str, world: WorldState) -> bool:
+        needle = keyword.lower()
+        if any(needle in w.title.lower() for w in world.windows):
+            return True
+        try:
+            return self._s.windows.exists(keyword) is not None
+        except Exception:
+            return False
 
     # -------------------------------------------------------------- memory
 
@@ -535,8 +738,9 @@ class ExecutionEngine:
     # -------------------------------------------------------------- finish
 
     def _finish(self, task: Task, context: TaskContext, state: ExecutionState,
-                executed: list[StepResult], errors: list[str], started: float) -> TaskResult:
-        state.llm_calls = self._s.llm.calls
+                executed: list[StepResult], rstate: Optional[ReasoningState],
+                errors: list[str], started: float) -> TaskResult:
+        state.llm_calls = int(getattr(self._s.llm, "calls", 0) or 0)
         duration = round(time.time() - started, 2)
 
         # Final observation: did the world actually change? Observe-only —
@@ -563,7 +767,12 @@ class ExecutionEngine:
             verified=verification.verified, confidence=verification.confidence, reason=verification.reason,
         )
 
-        all_ok = bool(executed) and all(r.ok for r in executed) and not errors
+        # Steps superseded by a replan (SKIPPED) no longer define the
+        # outcome: the goal was pursued along a different path, and
+        # verification owns the verdict for that path.
+        effective = [r for r in executed if r.status != StepStatus.SKIPPED]
+        acted = bool(effective) or bool(rstate is not None and rstate.goal_achieved_signal)
+        all_ok = acted and all(r.ok for r in effective) and not errors
         if not all_ok:
             status = TaskStatus.FAILED
         elif verification.verified:
@@ -596,6 +805,20 @@ class ExecutionEngine:
                 artifacts=artifacts,
             )
 
+        metadata = {
+            "replans": state.replans,
+            "healings": state.healings,
+            "llm_calls": state.llm_calls,
+            "evidence_count": len(context.evidence),
+            "sources": list(context.sources),
+            "perception": self._perception_metadata(final_world),
+        }
+        if rstate is not None:
+            try:
+                metadata["reasoning"] = self._s.reasoning.summary(rstate)
+            except Exception:
+                pass
+
         result = TaskResult(
             task_id=task.id,
             instruction=task.instruction,
@@ -610,14 +833,7 @@ class ExecutionEngine:
             duration_s=duration,
             errors=errors,
             confidence=report.confidence,
-            metadata={
-                "replans": state.replans,
-                "healings": state.healings,
-                "llm_calls": state.llm_calls,
-                "evidence_count": len(context.evidence),
-                "sources": list(context.sources),
-                "perception": self._perception_metadata(final_world),
-            },
+            metadata=metadata,
         )
 
         try:

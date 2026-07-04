@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from .config import EngineConfig
-from .contracts import GoalSpec, PlannerOutput, Step, StepResult
+from .contracts import GoalSpec, PlannerOutput, Step, StepResult, StrategyProfile
 from .llm import LLMClient
 
 _ACTIONS = "open_app|navigate_url|focus_window|click|type|clear_type|press|wait|scroll|read_screen"
@@ -29,6 +29,7 @@ class Planner:
         source: str = "planner",
         goal: GoalSpec | None = None,
         known_facts: dict[str, str] | None = None,
+        strategy: StrategyProfile | None = None,
     ) -> PlannerOutput:
         now = datetime.now()
         completed_summary = "\n".join(
@@ -55,11 +56,17 @@ class Planner:
                 f"- {k}: {v[:100]}" for k, v in list(known_facts.items())[:15]
             ) + "\n"
 
+        # Strategy tunes HOW this one planner plans; it never becomes a
+        # second planner or an app-specific code path.
+        strategy_context = ""
+        if strategy is not None and strategy.planning_guidance:
+            strategy_context = f"\nExecution strategy ({strategy.name}): {strategy.planning_guidance}\n"
+
         prompt = f"""You are the PerceptAI planner: a Windows desktop automation planner.
 Current time: {now.strftime("%B %d, %Y %I:%M %p")}
 
 GOAL: {instruction}
-{goal_context}{facts_context}
+{goal_context}{facts_context}{strategy_context}
 Already done:
 {completed_summary}
 

@@ -39,11 +39,56 @@ export interface ApiPerceptionStats {
   final_windows?: number;
 }
 
+/** Replayable reasoning record from TaskResult.metadata.reasoning. */
+export interface ApiReasoningSummary {
+  strategy: string;
+  cycles: number;
+  decisions: Record<string, number>;
+  decision_changes: number;
+  final_progress: {
+    completion: number;
+    confidence: number;
+    objectives_met: number;
+    objectives_total: number;
+    risk: number;
+    remaining_work: string;
+  };
+  final_uncertainty: number;
+  uncertainty_signals: Array<{ kind: string; detail: string; severity: number }>;
+  beliefs: Array<{
+    statement: string;
+    kind: string;
+    subject: string;
+    confidence: number;
+    supports: number;
+    contradictions: number;
+  }>;
+  hypotheses: { created: number; confirmed: number; rejected: number; open: number };
+  trajectory: Array<{
+    cycle: number;
+    decision: string;
+    reason: string;
+    uncertainty: number;
+    progress: number;
+    queue: number;
+  }>;
+  confidence_history: Array<{
+    cycle: number;
+    world_confidence: number;
+    uncertainty: number;
+    progress: number;
+  }>;
+}
+
 export interface ApiTaskResult {
   status: string;
   summary?: string;
   report?: ApiTaskReport | null;
-  metadata?: { perception?: ApiPerceptionStats; [key: string]: unknown } | null;
+  metadata?: {
+    perception?: ApiPerceptionStats;
+    reasoning?: ApiReasoningSummary;
+    [key: string]: unknown;
+  } | null;
   goal?: {
     intent: string;
     deliverable: string;

@@ -12,21 +12,29 @@ from .config import EngineConfig
 from .contracts import (
     ActionType,
     Artifact,
+    Belief,
     BoundingBox,
+    BudgetSnapshot,
+    Decision,
+    DecisionType,
     Evidence,
     GoalSpec,
+    Hypothesis,
     Observation,
+    ProgressEstimate,
     ProviderReport,
     SourceType,
     Step,
     StepResult,
     StepStatus,
+    StrategyProfile,
     Task,
     TaskContext,
     TaskReport,
     TaskResult,
     TaskStatus,
     UIElement,
+    UncertaintySignal,
     VerificationResult,
     WindowInfo,
     WorldDiff,
@@ -34,10 +42,12 @@ from .contracts import (
 )
 from .events import EventBus, EventType, TaskEvent
 from .providers import FrameContext, PerceptionProvider
+from .reasoning import ReasoningEngine
 from .session import AgentSession
+from .strategy import StrategyManager
 from .world import WorldModel
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "AgentSession",
@@ -70,4 +80,15 @@ __all__ = [
     "ProviderReport",
     "PerceptionProvider",
     "FrameContext",
+    # Adaptive Reasoning Engine
+    "ReasoningEngine",
+    "StrategyManager",
+    "Belief",
+    "Hypothesis",
+    "UncertaintySignal",
+    "ProgressEstimate",
+    "Decision",
+    "DecisionType",
+    "StrategyProfile",
+    "BudgetSnapshot",
 ]

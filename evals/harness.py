@@ -89,6 +89,8 @@ def run_suite(suite_path: Path, label: str, runs: int, runner_cmd: str | None) -
             self_status = (result_dict or {}).get("status", "crashed" if error else "unknown")
             self_claims_success = self_status == "completed"
             metadata = (result_dict or {}).get("metadata") or {}
+            reasoning = metadata.get("reasoning") or {}
+            confidence = (result_dict or {}).get("confidence")
 
             record = {
                 "task_id": task["id"],
@@ -101,10 +103,21 @@ def run_suite(suite_path: Path, label: str, runs: int, runner_cmd: str | None) -
                     if self_status not in ("external", "unknown")
                     else None
                 ),
+                # Calibration: reported confidence vs ground truth outcome.
+                "confidence": confidence,
+                "confidence_error": (
+                    round(abs(float(confidence) - (1.0 if outcome_success else 0.0)), 3)
+                    if isinstance(confidence, (int, float))
+                    else None
+                ),
                 "duration_s": (result_dict or {}).get("duration_s", duration),
                 "llm_calls": metadata.get("llm_calls"),
                 "replans": metadata.get("replans"),
                 "healings": metadata.get("healings"),
+                "strategy": reasoning.get("strategy"),
+                "cycles": reasoning.get("cycles"),
+                "decision_changes": reasoning.get("decision_changes"),
+                "final_uncertainty": reasoning.get("final_uncertainty"),
                 "checks": [{"name": c.name, "passed": c.passed, "detail": c.detail} for c in checks],
                 "error": error,
             }
@@ -138,10 +151,15 @@ def summarize(results: list[dict]) -> dict:
     honest = [r["self_report_honest"] for r in results if r["self_report_honest"] is not None]
     durations = [r["duration_s"] for r in results if isinstance(r["duration_s"], (int, float))]
     llm = [r["llm_calls"] for r in results if isinstance(r["llm_calls"], int)]
+    conf_errors = [r.get("confidence_error") for r in results
+                   if isinstance(r.get("confidence_error"), (int, float))]
     return {
         "tasks_run": total,
         "outcome_success_rate": round(passed / total, 3) if total else 0.0,
         "self_report_honesty": round(sum(honest) / len(honest), 3) if honest else None,
+        "avg_confidence_error": (
+            round(sum(conf_errors) / len(conf_errors), 3) if conf_errors else None
+        ),
         "avg_duration_s": round(sum(durations) / len(durations), 2) if durations else None,
         "avg_llm_calls": round(sum(llm) / len(llm), 2) if llm else None,
     }
@@ -153,7 +171,8 @@ def compare(before_path: Path, after_path: Path) -> None:
 
     print(f"\n{'metric':<26}{before['label']:>14}{after['label']:>14}{'delta':>12}")
     print("-" * 66)
-    for key in ("outcome_success_rate", "self_report_honesty", "avg_duration_s", "avg_llm_calls"):
+    for key in ("outcome_success_rate", "self_report_honesty", "avg_confidence_error",
+                "avg_duration_s", "avg_llm_calls"):
         b, a = before["summary"].get(key), after["summary"].get(key)
         delta = round(a - b, 3) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else "-"
         print(f"{key:<26}{str(b):>14}{str(a):>14}{str(delta):>12}")

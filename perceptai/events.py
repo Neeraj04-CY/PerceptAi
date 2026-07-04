@@ -30,6 +30,17 @@ class EventType(str, Enum):
     LOG = "log"
     TASK_COMPLETED = "task_completed"
     ERROR = "error"
+    # Reasoning stream (Chapter 4). Every reasoning-cycle transition is
+    # observable and replayable; consumers derive views, never rebuild them.
+    STRATEGY_SELECTED = "strategy_selected"
+    DECISION_MADE = "decision_made"
+    BELIEF_UPDATED = "belief_updated"
+    UNCERTAINTY_CHANGED = "uncertainty_changed"
+    PROGRESS_UPDATED = "progress_updated"
+    HYPOTHESIS_CREATED = "hypothesis_created"
+    HYPOTHESIS_RESOLVED = "hypothesis_resolved"  # confirmed or rejected
+    RECOVERY_STARTED = "recovery_started"
+    RECOVERY_COMPLETED = "recovery_completed"
 
 
 @dataclass

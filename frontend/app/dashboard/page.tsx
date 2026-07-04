@@ -8,6 +8,12 @@ import { TerminalLogs } from "@/components/dashboard/run/terminal-logs";
 import { ScreenPreview } from "@/components/dashboard/run/screen-preview";
 import { SessionInfo, type SessionMeta } from "@/components/dashboard/run/session-info";
 import { WorldModelPanel, type WorldSnapshot } from "@/components/dashboard/run/world-model";
+import {
+  ReasoningPanel,
+  applyReasoningEvent,
+  emptyReasoning,
+  type ReasoningStream,
+} from "@/components/dashboard/run/reasoning-panel";
 import { type TimelineStep, type LogLine } from "@/components/dashboard/run/mock-data";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -47,6 +53,7 @@ export default function RunTaskPage() {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [worlds, setWorlds] = useState<WorldSnapshot[]>([]);
+  const [reasoning, setReasoning] = useState<ReasoningStream>(emptyReasoning());
   const [running, setRunning] = useState(false);
   const [meta, setMeta] = useState<SessionMeta>(makeInitialMeta());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -66,6 +73,7 @@ export default function RunTaskPage() {
     setActiveIndex(-1);
     setLogs([]);
     setWorlds([]);
+    setReasoning(emptyReasoning());
   };
 
   const handleRun = useCallback(async (task: string) => {
@@ -266,6 +274,10 @@ export default function RunTaskPage() {
               ]);
               break;
 
+            case "reasoning":
+              setReasoning((prev) => applyReasoningEvent(prev, event));
+              break;
+
             case "log":
               setLogs((prev) => [...prev, {
                 ts: formatTime(new Date()),
@@ -363,6 +375,8 @@ export default function RunTaskPage() {
       </motion.div>
 
       <ExecutionTimeline steps={steps} activeIndex={activeIndex} visible={timelineVisible} />
+
+      <ReasoningPanel stream={reasoning} />
 
       <WorldModelPanel snapshots={worlds} />
 

@@ -14,17 +14,21 @@ from typing import Optional, Union
 
 from .actions import ActionExecutor
 from .config import EngineConfig
+from .constraints import ConstraintManager
 from .contracts import Task, TaskResult
 from .events import EventBus, EventType
 from .evidence import EvidenceCollector
 from .goal import GoalAnalyzer
 from .healer import Healer
+from .hypothesis import HypothesisGenerator
 from .llm import LLMClient
 from .memory import MemoryStore
 from .oscontrol import AppLauncher, WindowManager
 from .perception import PerceptionService
 from .planner import Planner
 from .providers import default_providers
+from .reasoning import ReasoningEngine
+from .recovery import RecoveryManager
 from .reporting import ReportBuilder
 from .verification import Verifier
 from .world import WorldModel
@@ -49,6 +53,9 @@ class AgentSession:
         evidence_collector: Optional[EvidenceCollector] = None,
         reporter: Optional[ReportBuilder] = None,
         world: Optional[WorldModel] = None,
+        reasoning: Optional[ReasoningEngine] = None,
+        recovery: Optional[RecoveryManager] = None,
+        constraints: Optional[ConstraintManager] = None,
     ):
         self.config = config or EngineConfig.from_env()
         self.id = str(uuid.uuid4())
@@ -77,6 +84,13 @@ class AgentSession:
                 windows=self.windows, llm=self.llm,
             ),
         )
+        # The reasoning layer: stateless services; per-run state lives in
+        # the ReasoningState the engine creates for each task.
+        self.reasoning = reasoning or ReasoningEngine(self.config)
+        self.recovery = recovery or RecoveryManager(
+            self.config, self.healer, HypothesisGenerator(self.config)
+        )
+        self.constraints = constraints or ConstraintManager(self.config)
 
     def emit(self, type: EventType, task: Task, **payload) -> None:
         self.events.emit(type, session_id=self.id, task_id=task.id, **payload)

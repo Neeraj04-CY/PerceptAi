@@ -11,11 +11,30 @@ from typing import Optional
 from .contracts import TaskResult
 from .events import EventType, TaskEvent
 
+# Reasoning-stream events share one additive SSE type. Old clients ignore
+# unknown types, so shipping these breaks nothing; new clients switch on
+# the inner `kind`.
+_REASONING_EVENTS = frozenset({
+    EventType.STRATEGY_SELECTED,
+    EventType.DECISION_MADE,
+    EventType.BELIEF_UPDATED,
+    EventType.UNCERTAINTY_CHANGED,
+    EventType.PROGRESS_UPDATED,
+    EventType.HYPOTHESIS_CREATED,
+    EventType.HYPOTHESIS_RESOLVED,
+    EventType.RECOVERY_STARTED,
+    EventType.RECOVERY_COMPLETED,
+})
+
 
 def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
     """Map a canonical TaskEvent to the dashboard's SSE dict schema.
     Returns None for events with no legacy representation."""
     p = event.payload
+
+    if event.type in _REASONING_EVENTS:
+        return {"type": "reasoning", "kind": event.type.value,
+                **p, "timestamp": event.timestamp}
 
     if event.type == EventType.TASK_STARTED:
         return {"type": "session_start", "instruction": p.get("instruction", ""), "timestamp": event.timestamp}

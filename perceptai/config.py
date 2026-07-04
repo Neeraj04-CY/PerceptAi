@@ -34,6 +34,18 @@ class EngineConfig:
     find_retries: int = 3
     healing_confidence_threshold: float = 0.5
 
+    # Reasoning — budgets for the decision loop and the thresholds that
+    # turn uncertainty into behavior (observe more, verify more, escalate).
+    max_cycles: int = 80                  # absolute bound on reasoning cycles per run
+    max_recovery_total: int = 6           # recovery attempts per run (max_healing_attempts is per failure)
+    max_llm_calls: int = 60
+    max_vision_escalations: int = 3
+    max_task_duration_s: float = 600.0
+    low_confidence_threshold: float = 0.55  # world confidence below this is an uncertainty signal
+    ambiguity_similarity: float = 0.75      # element-label similarity that reads as confusable
+    slow_provider_ms: float = 8000.0        # provider latency that suggests a busy/loading app
+    blocked_window_titles: list = field(default_factory=list)  # policy: never send input to these
+
     # Perception
     fast_cache_ttl_s: float = 0.8
     ocr_max_side: int = 960

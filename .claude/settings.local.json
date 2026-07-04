@@ -31,7 +31,16 @@
       "PowerShell(Remove-Job *)",
       "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 3; .venv311\\\\Scripts\\\\python.exe -c \"import perceptai; print\\('import ok', perceptai.__version__\\); s = perceptai.AgentSession\\(perceptai.EngineConfig\\(groq_api_key='x'\\)\\); print\\('session ok, providers:', [p.name for p in s.world._providers]\\)\")",
       "PowerShell(git checkout *)",
-      "PowerShell(git *)"
+      "PowerShell(git *)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 25)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/test_runtime.py::test_click_missing_element_fails_without_blind_click -q 2>&1 | Select-Object -Last 30)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\neera\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-neera-OneDrive-Documents-Projects-PerceptAi\\\\c82acfab-e1cd-410b-a0fa-00ac174be453\\\\scratchpad\\\\debug_click.py\")",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -c \"import uiautomation; print\\('uia installed'\\)\" 2>&1; .venv311\\\\Scripts\\\\python.exe -c \"import sys; sys.path.insert\\(0, '.'\\); from perceptai.config import EngineConfig; from perceptai.providers import UiaProvider; p = UiaProvider\\(EngineConfig\\(uia_enabled=True\\)\\); print\\('available:', p.available\\(\\)\\)\")",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 8)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 12)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 4)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m evals.reasoning_bench --label chapter4-validation 2>&1 | Select-Object -Last 40)",
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m evals.reasoning_bench --label chapter4-validation 2>&1 | Select-Object -Last 30)"
     ]
   }
 }
