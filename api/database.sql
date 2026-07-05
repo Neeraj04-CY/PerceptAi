@@ -1,3 +1,8 @@
+-- Baseline schema (001). Fresh installs: run this file first, then every
+-- file in api/migrations/ in order (002_platform.sql adds organizations,
+-- workspaces, RBAC, secrets, workflows, missions, approvals, events and
+-- audit). Each statement lives in exactly one file — never copy them here.
+
 -- Users table
 CREATE TABLE users (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

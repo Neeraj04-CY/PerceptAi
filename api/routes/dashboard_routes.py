@@ -34,9 +34,9 @@ async def get_stats(current_user: dict = Depends(get_current_user)):
         "user_id", user_id
     ).execute()
     plan_id = plan.data[0]["plan_id"] if plan.data else "free"
-    
-    limits = {"free": 100, "builder": 10000, "scale": 999999}
-    
+
+    from plans import monthly_limit
+
     recent = [{
         "id": s["id"],
         "instruction": s["instruction"],
@@ -51,7 +51,7 @@ async def get_stats(current_user: dict = Depends(get_current_user)):
         successful_sessions=len(completed),
         failed_sessions=len(failed),
         total_executions_this_month=executions_used,
-        executions_limit=limits.get(plan_id, 100),
+        executions_limit=monthly_limit(plan_id, db),
         recent_sessions=recent,
         plan=plan_id
     )
@@ -95,8 +95,8 @@ async def get_usage(current_user: dict = Depends(get_current_user)):
     ).execute()
     
     plan_id = plan.data[0]["plan_id"] if plan.data else "free"
-    limits = {"free": 100, "builder": 10000, "scale": 999999}
-    limit = limits.get(plan_id, 100)
+    from plans import monthly_limit
+    limit = monthly_limit(plan_id, db)
     used = usage.data[0]["executions"] if usage.data else 0
     
     return UsageResponse(

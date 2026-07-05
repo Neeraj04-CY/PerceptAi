@@ -36,6 +36,7 @@ python -m evals.workforce_bench --label <name>   # workforce benchmark: fully si
 # API backend (from api/, has its own .env with Supabase/JWT/Groq keys)
 pip install -r api/requirements.txt
 uvicorn main:app --reload --port 8000         # run from inside api/ — imports are cwd-relative
+# DB schema: run api/database.sql then api/migrations/*.sql in order (Supabase SQL editor)
 
 # Frontend (from frontend/)
 npm install
@@ -75,9 +76,17 @@ Working memory: `TaskContext` is accumulate-only (evidence, sources, notes, fact
 
 ### API layer (api/)
 
-FastAPI, run from inside `api/` (flat cwd-relative imports). `api/executor.py` is a **thin adapter, not a runtime**: it creates AgentSessions, relays canonical events via `to_legacy_sse`, returns TaskResults, and degrades to a structured error on hosts without desktop deps (Railway). The SSE generator's final `"_result"` item is internal — persisted to the `sessions.result` JSONB column, never forwarded to clients.
+FastAPI, run from inside `api/` (flat cwd-relative imports). `api/executor.py` is a **thin adapter, not a runtime**: ONE shared relay (`_relay`) powers `execute_task_stream` (legacy wire v0 via `to_legacy_sse`) and `execute_mission_stream` (wire v1 via `to_platform_sse` — full-fidelity canonical events, defined ONLY in `perceptai/streaming.py`). Both capture canonical events; the final `"_result"` item is internal — result persisted to `sessions.result`/`missions.result` JSONB, events bulk-inserted to the `events` table (`events_store.py`, bounded + failure-tolerant), never forwarded to clients. Degrades to a structured error on hosts without desktop deps (Railway).
 
-Supabase Postgres via service-role key; schema in `database.sql`. Two auth mechanisms: JWT Bearer (custom bcrypt users table) for dashboard/keys routes; `X-API-Key` (`pk_*`, SHA-256 hashed) for execute routes. Plans: free 100 / builder 10k / scale ~unlimited executions per month, enforced pre-execution; every execution is a `sessions` row (audit trail).
+Supabase Postgres via service-role key; schema = `database.sql` (001 baseline) + `api/migrations/002_platform.sql` (organizations, members/RBAC, workspaces, secrets, workflows+versions, missions, approvals, events, audit_log) — each statement lives in exactly one file. Platform routes 503 with a named hint if 002 is missing; the pre-platform surface keeps working. Two auth mechanisms: JWT Bearer (custom bcrypt users table) for dashboard/org/workflow/approval routes; `X-API-Key` (`pk_*`, SHA-256 hashed) for execute/mission streaming.
+
+Platform invariants (Chapter Ω):
+- **Plans/RBAC/policy are data.** `plans.py` is the ONLY source of plan behavior (DB-first, fallback constants — never re-hardcode limits in routes); `rbac.py` is a pure permission matrix (fails closed); workspace policy is JSONB consumed by `MissionPolicy`.
+- **Orgs**: `orgs.py` is the service layer (personal-org bootstrap is lazy — every user always resolves to an org); route modules import it, never each other. Every admin mutation calls `record_audit` (control-plane trail; execution audit is the events table).
+- **Workflows are parametrized missions, not programs**: text + `{{variables}}` (rendered server-side by `templates.render_instruction`), versioned on publish, executed through the SAME streaming endpoints — never add a second workflow interpreter; branching stays in the engine's WorkGraph.
+- **Approvals are grant-ahead**: the mission approver consumes an APPROVED (workspace, capability) row or creates a PENDING one and denies honestly. No silent bypass, no mid-mission pause (roadmap).
+- **Secrets** (`secrets_crypto.py`): Fernet, key injected from `SECRETS_KEY`; values are write-only — never returned by the API and never fed into LLM-visible instructions.
+- **Scheduler** (`scheduler.py`): schedules are data on the workflow row; the loop is opt-in (`ENABLE_SCHEDULER`, default off — it drives THIS host's desktop) and task-mode only.
 
 **Execution happens on the machine hosting the API.** Cloud deploys have no desktop; real automation requires running the API on a local Windows machine. The long-term design is control-plane + local runners — keep new interfaces compatible with remote, asynchronous execution.
 
@@ -91,7 +100,7 @@ Supabase Postgres via service-role key; schema in `database.sql`. Two auth mecha
 
 ### Frontend (frontend/)
 
-Next.js 14 App Router + TypeScript + Tailwind + framer-motion + Recharts. JWT in localStorage + `perceptai_token` cookie; `middleware.ts` gates `/dashboard`. The Run Task page consumes the SSE stream; Sessions/Analytics poll REST via typed helpers in `lib/api.ts`. UI primitives in `components/ui/`, features under `components/dashboard/**` and `components/landing/**`, Tailwind + `cn()` helper.
+Next.js 14 App Router + TypeScript + Tailwind + framer-motion + Recharts. JWT in localStorage + `perceptai_token` cookie; `middleware.ts` gates `/dashboard`. IA: Mission Control (`/dashboard`, ops command center + first-run onboarding), Run (`/dashboard/run`, task/mission modes over `lib/stream.ts`), Missions (list + replayable detail from persisted events), Studio (workflow authoring/publish/schedule; runs render server-side then hand off to Run via the `perceptai_pending_run` localStorage key), Sessions (detail includes the reasoning replay card), Approvals, Analytics, Organization (members/workspaces/secrets/audit), Keys. All REST via typed helpers in `lib/api.ts` (platform types + helpers live there — mirror new response shapes as exported interfaces). UI primitives in `components/ui/`, features under `components/dashboard/**` and `components/landing/**`, Tailwind + `cn()` helper.
 
 ## Coding standards
 

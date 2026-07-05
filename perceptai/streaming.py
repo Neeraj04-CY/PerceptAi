@@ -142,6 +142,19 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
     return None
 
 
+def to_platform_sse(event: TaskEvent) -> dict:
+    """Wire format v1: the full-fidelity serialization for platform
+    consumers (mission streams, event replay). Every canonical event is
+    representable; payload stays nested so event fields never collide."""
+    return {
+        "type": event.type.value,
+        "seq": event.seq,
+        "task_id": event.task_id,
+        "timestamp": event.timestamp,
+        "data": event.payload,
+    }
+
+
 def legacy_steps(result: TaskResult) -> list[dict]:
     """Serialize TaskResult steps into the dashboard's session-steps schema."""
     steps = []

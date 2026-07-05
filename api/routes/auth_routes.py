@@ -46,8 +46,17 @@ async def signup(body: SignUpRequest):
         "name": "Default Key"
     }).execute()
     
+    # Bootstrap the personal organization + default workspace. Best-effort:
+    # a database without the platform migration still gets a working account
+    # (the org is created lazily on first platform request instead).
+    try:
+        from orgs import ensure_personal_org
+        ensure_personal_org(db, user_id, body.email)
+    except Exception:
+        pass
+
     token = create_token(user_id, body.email)
-    
+
     return AuthResponse(
         access_token=token,
         user_id=user_id,

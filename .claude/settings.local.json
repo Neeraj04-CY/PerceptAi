@@ -40,7 +40,17 @@
       "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 12)",
       "PowerShell(.venv311\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1 | Select-Object -Last 4)",
       "PowerShell(.venv311\\\\Scripts\\\\python.exe -m evals.reasoning_bench --label chapter4-validation 2>&1 | Select-Object -Last 40)",
-      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m evals.reasoning_bench --label chapter4-validation 2>&1 | Select-Object -Last 30)"
+      "PowerShell(.venv311\\\\Scripts\\\\python.exe -m evals.reasoning_bench --label chapter4-validation 2>&1 | Select-Object -Last 30)",
+      "Bash(git fetch *)",
+      "Bash(npm run *)",
+      "Bash(./.venv311/Scripts/python.exe *)",
+      "Bash(C:/Users/neera/OneDrive/Documents/Projects/PerceptAi/.venv311/Scripts/python.exe *)",
+      "Bash(../.venv311/Scripts/python.exe -c \"import main; print\\('api/main imports OK'\\); routes=[r.path for r in main.app.routes]; print\\(len\\(routes\\),'routes'\\); print\\('\\\\n'.join\\(sorted\\(p for p in routes if p.startswith\\('/api'\\)\\)\\)\\)\")",
+      "Bash(node scripts/validate_palette.js \"#00ff85,#7dd3fc,#c4b5fd\" --mode dark)",
+      "Bash(node scripts/validate_palette.js \"#34d399,#38bdf8,#f472b6\" --mode dark)",
+      "Bash(node scripts/validate_palette.js \"#2dd4bf,#60a5fa,#f472b6\" --mode dark)",
+      "Bash(node scripts/validate_palette.js \"#3987e5,#199e70,#c98500\" --mode dark)",
+      "Bash(../.venv311/Scripts/python.exe -c \"import main, scheduler, orgs, plans, rbac, templates, events_store, secrets_crypto, sse, executor; print\\('all api modules import OK'\\); print\\(len\\(main.app.routes\\), 'routes registered'\\)\")"
     ]
   }
 }

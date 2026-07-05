@@ -52,13 +52,13 @@ def check_usage_limit(user_id: str, plan_id: str) -> bool:
     result = db.table("usage").select("executions").eq(
         "user_id", user_id
     ).eq("month", month).execute()
-    
-    limits = {"free": 100, "builder": 10000, "scale": 999999}
-    limit = limits.get(plan_id, 100)
-    
+
+    from plans import monthly_limit
+    limit = monthly_limit(plan_id, db)
+
     if not result.data:
         return True  # No usage yet
-    
+
     return result.data[0]["executions"] < limit
 
 def increment_usage(user_id: str, session_id: str):
@@ -99,14 +99,20 @@ async def execute(
     # Create session record
     session_id = str(uuid.uuid4())
     db = get_service_db()
-    
-    db.table("sessions").insert({
+
+    from orgs import session_scope
+    row = {
         "id": session_id,
         "user_id": user_id,
         "api_key_id": key_data["id"],
         "instruction": body.instruction,
         "status": "running"
-    }).execute()
+    }
+    scope = session_scope(db, user_id, body.workspace_id, body.workflow_id)
+    try:
+        db.table("sessions").insert({**row, **scope}).execute()
+    except Exception:
+        db.table("sessions").insert(row).execute()
     
     # Execute task through the unified engine
     result, engine_error = execute_task(body.instruction)

@@ -5,23 +5,36 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  LayoutDashboard,
   PlayCircle,
+  Network,
+  PenTool,
   Layers,
+  ShieldCheck,
   KeyRound,
   BarChart3,
-  Settings,
+  Building2,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { label: "Run Task", href: "/dashboard", icon: PlayCircle, testid: "nav-run", enabled: true },
+  { label: "Mission Control", href: "/dashboard", icon: LayoutDashboard, testid: "nav-home", enabled: true },
+  { label: "Run", href: "/dashboard/run", icon: PlayCircle, testid: "nav-run", enabled: true },
+  { label: "Missions", href: "/dashboard/missions", icon: Network, testid: "nav-missions", enabled: true },
+  { label: "Studio", href: "/dashboard/studio", icon: PenTool, testid: "nav-studio", enabled: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
-  { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
+  { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3, testid: "nav-analytics", enabled: true },
-  { label: "Settings", href: "#", icon: Settings, testid: "nav-settings", enabled: false },
+  { label: "Organization", href: "/dashboard/org", icon: Building2, testid: "nav-org", enabled: true },
+  { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
 ];
+
+function isActive(pathname: string, href: string): boolean {
+  if (href === "/dashboard") return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
@@ -92,7 +105,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
         {nav.map((item) => {
-          const active = item.enabled && pathname === item.href;
+          const active = item.enabled && isActive(pathname, item.href);
           const Icon = item.icon;
           return (
             <Link
@@ -175,9 +188,9 @@ export function MobileBottomNav() {
       data-testid="mobile-bottom-nav"
     >
       <div className="flex items-center justify-around h-16 px-2">
-        {nav.filter((n) => n.enabled).map((item) => {
+        {nav.filter((n) => n.enabled).slice(0, 5).map((item) => {
           const Icon = item.icon;
-          const active = pathname === item.href;
+          const active = isActive(pathname, item.href);
           return (
             <Link
               key={item.label}

@@ -277,3 +277,341 @@ export async function getDashboardStats(signal?: AbortSignal): Promise<Dashboard
 export async function getUsage(signal?: AbortSignal): Promise<UsageStats> {
   return getJsonAuth<UsageStats>("/dashboard/usage", signal);
 }
+
+/* ------------------------------------------------------------------ */
+/* Platform (Chapter Ω): orgs, missions, workflows, approvals, health  */
+/* ------------------------------------------------------------------ */
+
+async function sendJsonAuth<T>(
+  method: "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: Record<string, unknown>
+): Promise<T> {
+  const token = getToken();
+  if (!token) throw new Error("Unauthorized");
+  const res = await fetch(`${API_V1}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (res.status === 401 || res.status === 403) throw new Error("Unauthorized");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || `Request failed (${res.status})`);
+  }
+  return (await res.json()) as T;
+}
+
+export interface ApiOrg {
+  id: string;
+  name: string;
+  slug: string;
+  plan_id: string;
+  is_personal: boolean;
+  role: string;
+  created_at?: string;
+}
+
+export interface ApiWorkspace {
+  id: string;
+  org_id: string;
+  name: string;
+  slug: string;
+  description: string;
+  environment: string;
+  policy: {
+    approval_capabilities?: string[];
+    allowed_capabilities?: string[] | null;
+    max_cost_per_mission?: number | null;
+  } | null;
+  created_at?: string;
+}
+
+export interface ApiOrgDetail extends ApiOrg {
+  plan: { id: string; name: string; monthly_executions: number; limits: Record<string, number> };
+  member_count: number;
+  workspaces: ApiWorkspace[];
+}
+
+export interface ApiMember {
+  user_id: string;
+  email: string;
+  role: string;
+  joined_at?: string;
+}
+
+export interface ApiSecretMeta {
+  id: string;
+  name: string;
+  workspace_id: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ApiAuditEntry {
+  id: number;
+  org_id: string;
+  workspace_id: string | null;
+  actor_id: string | null;
+  actor_email: string;
+  action: string;
+  target: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface OrgUsage {
+  month: string;
+  executions_used: number;
+  executions_limit: number;
+  plan: string;
+  workforce_limits: Record<string, number>;
+  percentage_used: number;
+}
+
+export interface ApiMissionMetrics {
+  orders_total: number;
+  orders_completed: number;
+  orders_failed: number;
+  orders_cancelled: number;
+  orders_skipped: number;
+  reassignments: number;
+  duplicates_cancelled: number;
+  peak_parallelism: number;
+  cycles: number;
+  cost_total: number;
+  evidence_count: number;
+  conflicts_open: number;
+  specialist_utilization: Record<string, number>;
+}
+
+export interface ApiWorkOrder {
+  id: string;
+  objective: string;
+  capability: string;
+  status: string;
+  status_reason: string;
+  assigned_to: string;
+  attempts: number;
+  depends_on: string[];
+  requires: string[];
+  produces: string[];
+  priority: number;
+}
+
+export interface ApiWorkResult {
+  order_id: string;
+  specialist: string;
+  status: string;
+  summary: string;
+  outputs: Record<string, string>;
+  evidence: ApiEvidence[];
+  confidence: number;
+  duration_s: number;
+  cost: number;
+  error: string;
+}
+
+export interface ApiMissionResult {
+  mission_id: string;
+  instruction: string;
+  status: string;
+  report?: ApiTaskReport | null;
+  orders: ApiWorkOrder[];
+  work: ApiWorkResult[];
+  metrics: ApiMissionMetrics;
+  duration_s: number;
+  errors: string[];
+  confidence: number;
+  metadata?: {
+    evidence_graph?: { claims: number; entities: number; sources: number; avg_confidence: number };
+    conflicts?: Array<{ entity: string; attribute: string; values: Array<{ value: string; sources: string[] }> }>;
+    specialists?: Array<{ name: string; capabilities: string[]; active: number; completed: number; failed: number; healthy: boolean }>;
+    [key: string]: unknown;
+  } | null;
+}
+
+export interface ApiMission {
+  id: string;
+  instruction: string;
+  status: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
+  result?: ApiMissionResult | null;
+  metrics?: ApiMissionMetrics | null;
+  error?: string | null;
+  duration_s: number | null;
+  workspace_id?: string | null;
+  workflow_id?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface ApiEventRow {
+  seq: number;
+  type: string;
+  task_id: string;
+  ts: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface ApiApproval {
+  id: string;
+  org_id: string;
+  workspace_id: string | null;
+  mission_id: string | null;
+  capability: string;
+  objective: string;
+  status: "pending" | "approved" | "denied" | "consumed";
+  requested_by: string | null;
+  decided_by: string | null;
+  reason: string;
+  created_at: string;
+  decided_at?: string | null;
+}
+
+export interface ApiWorkflowVariable {
+  name: string;
+  label?: string;
+  type?: string;
+  default?: string;
+  required?: boolean;
+  description?: string;
+}
+
+export interface ApiWorkflow {
+  id: string;
+  org_id?: string;
+  workspace_id: string | null;
+  name: string;
+  description: string;
+  instruction: string;
+  variables: ApiWorkflowVariable[];
+  mode: "task" | "mission";
+  policy: Record<string, unknown>;
+  status: "draft" | "published" | "archived";
+  version: number;
+  schedule: { enabled?: boolean; interval_minutes?: number; next_run_at?: string; last_run_at?: string } | null;
+  created_at?: string;
+  updated_at?: string;
+  versions?: Array<{ version: number; published_by: string; published_at: string }>;
+}
+
+export interface ApiTemplate {
+  id: string;
+  name: string;
+  category: string;
+  mode: "task" | "mission";
+  description: string;
+  instruction: string;
+  variables: ApiWorkflowVariable[];
+  outputs: string[];
+}
+
+export interface ApiCapabilities {
+  available: boolean;
+  reason?: string;
+  specialists: Array<{
+    name: string;
+    capabilities: string[];
+    description: string;
+    cost: number;
+    latency_s: number;
+    confidence: number;
+    resources: string[];
+    provider: string;
+    version: string;
+    healthy: boolean;
+  }>;
+  capabilities: string[];
+  plugin_count?: number;
+}
+
+export interface PlatformHealth {
+  status: string;
+  database: boolean;
+  engine: boolean;
+  engine_reason: string;
+  execution_host: boolean;
+  scheduler: boolean;
+  environment: string;
+}
+
+// Organizations
+export const getOrgs = (signal?: AbortSignal) => getJsonAuth<ApiOrg[]>("/orgs", signal);
+export const getOrgDetail = (orgId: string, signal?: AbortSignal) =>
+  getJsonAuth<ApiOrgDetail>(`/orgs/${orgId}`, signal);
+export const createOrg = (name: string) => sendJsonAuth<ApiOrg>("POST", "/orgs", { name });
+export const getMembers = (orgId: string, signal?: AbortSignal) =>
+  getJsonAuth<ApiMember[]>(`/orgs/${orgId}/members`, signal);
+export const addMember = (orgId: string, email: string, role: string) =>
+  sendJsonAuth<ApiMember>("POST", `/orgs/${orgId}/members`, { email, role });
+export const updateMemberRole = (orgId: string, userId: string, role: string) =>
+  sendJsonAuth<{ user_id: string; role: string }>("PATCH", `/orgs/${orgId}/members/${userId}`, { role });
+export const removeMember = (orgId: string, userId: string) =>
+  sendJsonAuth<{ removed: string }>("DELETE", `/orgs/${orgId}/members/${userId}`);
+export const createWorkspace = (orgId: string, name: string, description = "", environment = "production") =>
+  sendJsonAuth<ApiWorkspace>("POST", `/orgs/${orgId}/workspaces`, { name, description, environment });
+export const updateWorkspacePolicy = (orgId: string, workspaceId: string, policy: Record<string, unknown>) =>
+  sendJsonAuth<ApiWorkspace>("PATCH", `/orgs/${orgId}/workspaces/${workspaceId}`, { policy });
+export const getSecrets = (orgId: string, signal?: AbortSignal) =>
+  getJsonAuth<ApiSecretMeta[]>(`/orgs/${orgId}/secrets`, signal);
+export const createSecret = (orgId: string, name: string, value: string, workspaceId?: string) =>
+  sendJsonAuth<ApiSecretMeta>("POST", `/orgs/${orgId}/secrets`, {
+    name, value, workspace_id: workspaceId ?? null,
+  });
+export const deleteSecret = (orgId: string, secretId: string) =>
+  sendJsonAuth<{ deleted: string }>("DELETE", `/orgs/${orgId}/secrets/${secretId}`);
+export const getAudit = (orgId: string, limit = 100, signal?: AbortSignal) =>
+  getJsonAuth<ApiAuditEntry[]>(`/orgs/${orgId}/audit?limit=${limit}`, signal);
+export const getOrgUsage = (orgId: string, signal?: AbortSignal) =>
+  getJsonAuth<OrgUsage>(`/orgs/${orgId}/usage`, signal);
+
+// Missions
+export const getMissions = (limit = 25, signal?: AbortSignal) =>
+  getJsonAuth<ApiMission[]>(`/missions?limit=${limit}`, signal);
+export const getMission = (id: string, signal?: AbortSignal) =>
+  getJsonAuth<ApiMission>(`/missions/${encodeURIComponent(id)}`, signal);
+export const getMissionEvents = (id: string, afterSeq = 0, signal?: AbortSignal) =>
+  getJsonAuth<ApiEventRow[]>(`/missions/${encodeURIComponent(id)}/events?after_seq=${afterSeq}`, signal);
+export const getSessionEvents = (id: string, afterSeq = 0, signal?: AbortSignal) =>
+  getJsonAuth<ApiEventRow[]>(`/platform/sessions/${encodeURIComponent(id)}/events?after_seq=${afterSeq}`, signal);
+
+// Approvals
+export const getApprovals = (status = "pending", signal?: AbortSignal) =>
+  getJsonAuth<ApiApproval[]>(`/approvals?status=${status}`, signal);
+export const decideApproval = (id: string, decision: "approved" | "denied", reason = "") =>
+  sendJsonAuth<{ id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, reason });
+
+// Workflows (Agent Studio)
+export const getWorkflows = (signal?: AbortSignal) => getJsonAuth<ApiWorkflow[]>("/workflows", signal);
+export const getWorkflow = (id: string, signal?: AbortSignal) =>
+  getJsonAuth<ApiWorkflow>(`/workflows/${encodeURIComponent(id)}`, signal);
+export const createWorkflow = (body: Partial<ApiWorkflow> & { template_id?: string }) =>
+  sendJsonAuth<ApiWorkflow>("POST", "/workflows", body as Record<string, unknown>);
+export const updateWorkflow = (id: string, patch: Partial<ApiWorkflow>) =>
+  sendJsonAuth<ApiWorkflow>("PATCH", `/workflows/${encodeURIComponent(id)}`, patch as Record<string, unknown>);
+export const publishWorkflow = (id: string) =>
+  sendJsonAuth<{ id: string; version: number; status: string }>("POST", `/workflows/${encodeURIComponent(id)}/publish`);
+export const renderWorkflow = (id: string, values: Record<string, string>) =>
+  sendJsonAuth<{ instruction: string; mode: "task" | "mission"; workflow_id: string; workspace_id: string | null }>(
+    "POST", `/workflows/${encodeURIComponent(id)}/render`, { values });
+
+// Platform
+export const getTemplates = (signal?: AbortSignal) => {
+  return fetch(`${API_V1}/platform/templates`, { cache: "no-store", signal })
+    .then((r) => {
+      if (!r.ok) throw new Error(`Failed to load templates (${r.status})`);
+      return r.json() as Promise<ApiTemplate[]>;
+    });
+};
+export const getCapabilities = (signal?: AbortSignal) =>
+  getJsonAuth<ApiCapabilities>("/platform/capabilities", signal);
+export const getPlatformHealth = (signal?: AbortSignal) => {
+  return fetch(`${API_V1}/platform/health`, { cache: "no-store", signal })
+    .then((r) => {
+      if (!r.ok) throw new Error(`Health check failed (${r.status})`);
+      return r.json() as Promise<PlatformHealth>;
+    });
+};

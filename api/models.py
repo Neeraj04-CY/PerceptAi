@@ -36,6 +36,8 @@ class NewAPIKeyResponse(APIKeyResponse):
 class ExecuteRequest(BaseModel):
     instruction: str
     context: Optional[str] = None
+    workspace_id: Optional[str] = None
+    workflow_id: Optional[str] = None
 
 class ExecutionStep(BaseModel):
     step_number: int
@@ -80,6 +82,68 @@ class UsageResponse(BaseModel):
     executions_limit: int
     plan: str
     percentage_used: float
+
+# Missions (workforce layer)
+class MissionRequest(BaseModel):
+    instruction: str
+    workspace_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+
+# Organizations
+class OrgCreateRequest(BaseModel):
+    name: str
+
+class MemberAddRequest(BaseModel):
+    email: EmailStr
+    role: str = "member"
+
+class MemberUpdateRequest(BaseModel):
+    role: str
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    environment: str = "production"
+
+class WorkspaceUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    environment: Optional[str] = None
+    policy: Optional[dict] = None
+
+class SecretCreateRequest(BaseModel):
+    name: str
+    value: str
+    workspace_id: Optional[str] = None
+
+# Workflows (Agent Studio)
+class WorkflowCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    instruction: str = ""
+    variables: List[dict] = []
+    mode: str = "task"
+    policy: dict = {}
+    workspace_id: Optional[str] = None
+    template_id: Optional[str] = None  # seed from the template gallery
+
+class WorkflowUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    instruction: Optional[str] = None
+    variables: Optional[List[dict]] = None
+    mode: Optional[str] = None
+    policy: Optional[dict] = None
+    schedule: Optional[dict] = None
+    status: Optional[str] = None  # draft | published | archived
+
+class WorkflowRenderRequest(BaseModel):
+    values: dict = {}
+
+# Approvals
+class ApprovalDecisionRequest(BaseModel):
+    decision: str  # approved | denied
+    reason: str = ""
 
 # Dashboard
 class DashboardResponse(BaseModel):

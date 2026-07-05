@@ -15,6 +15,12 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     REDIS_URL = os.getenv("REDIS_URL")
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+    # Secrets vault encryption key; falls back to JWT_SECRET so a single
+    # secret works out of the box. Set separately in production.
+    SECRETS_KEY = os.getenv("SECRETS_KEY") or os.getenv("JWT_SECRET", "change-this-secret")
+    # Scheduled workflows execute on THIS host's desktop. Off by default;
+    # enable only on a machine dedicated to running automations.
+    ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "false").lower() in ("1", "true", "yes")
     
     # Free tier limits
     FREE_MONTHLY_EXECUTIONS = 100

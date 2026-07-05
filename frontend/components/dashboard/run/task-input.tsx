@@ -10,6 +10,8 @@ interface TaskInputProps {
   onRun: (task: string) => void;
   onStop?: () => void;
   apiKeyValue?: string;
+  /** Prefill (e.g. a rendered workflow from Studio); overrides the draft. */
+  initialTask?: string;
 }
 
 const suggestions = [
@@ -28,10 +30,14 @@ function formatKeyPreview(key: unknown) {
   return "pk_••••••••";
 }
 
-export function TaskInput({ running, onRun, onStop, apiKeyValue }: TaskInputProps) {
+export function TaskInput({ running, onRun, onStop, apiKeyValue, initialTask }: TaskInputProps) {
   const [task, setTask] = useState("Launch Chrome and summarize the latest AI news");
   const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (initialTask) setTask(initialTask);
+  }, [initialTask]);
 
   useEffect(() => {
     if (!ref.current) return;
