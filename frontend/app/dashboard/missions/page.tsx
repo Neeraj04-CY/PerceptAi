@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowRight, Network } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, isAbortError } from "@/lib/utils";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { ApiMission, getMissions } from "@/lib/api";
 
 const FILTERS = ["all", "running", "completed", "partial", "failed"] as const;
@@ -21,6 +22,7 @@ export default function MissionsPage() {
     getMissions(100, controller.signal)
       .then(setMissions)
       .catch((e) => {
+        if (isAbortError(e)) return;
         if (String(e).includes("Unauthorized")) router.replace("/signin");
         else setError(e instanceof Error ? e.message : "Failed to load missions");
       });
@@ -31,25 +33,23 @@ export default function MissionsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[17px] font-medium text-white">Missions</h1>
-          <p className="text-[12px] text-white/40 mt-0.5">
-            Every workforce run: orders, evidence, decisions and the report it produced.
-          </p>
-        </div>
-        <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1">
-          {FILTERS.map((f) => (
-            <button key={f} onClick={() => setFilter(f)}
-                    className={cn(
-                      "rounded-md px-2.5 h-6 font-mono text-[10px] uppercase tracking-wider transition-colors",
-                      filter === f ? "bg-white/[0.07] text-white" : "text-white/40 hover:text-white",
-                    )}>
-              {f}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="Missions"
+        subtitle="Every workforce run: orders, evidence, decisions and the report it produced."
+        actions={
+          <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1">
+            {FILTERS.map((f) => (
+              <button key={f} onClick={() => setFilter(f)}
+                      className={cn(
+                        "rounded-md px-2.5 h-7 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                        filter === f ? "bg-white/[0.07] text-white" : "text-white/40 hover:text-white",
+                      )}>
+                {f}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {error && (
         <div className="rounded-xl border border-red-400/20 bg-red-400/[0.04] px-4 py-3 text-[12px] text-red-300">

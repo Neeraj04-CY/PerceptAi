@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, CalendarClock, Play, Plus, Trash2, UploadCloud } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, isAbortError } from "@/lib/utils";
 import {
   ApiWorkflow,
   ApiWorkflowVariable,
@@ -43,6 +43,7 @@ export default function WorkflowEditorPage() {
     getWorkflow(params.id, controller.signal)
       .then(setWorkflow)
       .catch((e) => {
+        if (isAbortError(e)) return;
         if (String(e).includes("Unauthorized")) router.replace("/signin");
         else setError(e instanceof Error ? e.message : "Failed to load workflow");
       });

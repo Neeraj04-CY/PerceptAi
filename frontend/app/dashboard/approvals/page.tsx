@@ -7,7 +7,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, isAbortError } from "@/lib/utils";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { ApiApproval, decideApproval, getApprovals } from "@/lib/api";
 
 const TABS = ["pending", "approved", "denied", "consumed", "all"] as const;
@@ -23,6 +24,7 @@ export default function ApprovalsPage() {
     return getApprovals(tab, signal)
       .then(setApprovals)
       .catch((e) => {
+        if (isAbortError(e)) return;
         if (String(e).includes("Unauthorized")) router.replace("/signin");
         else setError(e instanceof Error ? e.message : "Failed to load approvals");
       });
@@ -50,24 +52,21 @@ export default function ApprovalsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[17px] font-medium text-white">Approvals</h1>
-          <p className="text-[12px] text-white/40 mt-0.5">
-            Capabilities gated by workspace policy wait here. Approving
-            authorizes the next matching dispatch — nothing runs silently.
-          </p>
-        </div>
-        <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1">
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-                    className={cn("rounded-md px-2.5 h-6 font-mono text-[10px] uppercase tracking-wider transition-colors",
-                                  tab === t ? "bg-white/[0.07] text-white" : "text-white/40 hover:text-white")}>
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PageHeader
+        title="Approvals"
+        subtitle="Capabilities gated by workspace policy wait here. Approving authorizes the next matching dispatch — nothing runs silently."
+        actions={
+          <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1">
+            {TABS.map((t) => (
+              <button key={t} onClick={() => setTab(t)}
+                      className={cn("rounded-md px-2.5 h-7 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                                    tab === t ? "bg-white/[0.07] text-white" : "text-white/40 hover:text-white")}>
+                {t}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {error && (
         <div className="rounded-xl border border-red-400/20 bg-red-400/[0.04] px-4 py-3 text-[12px] text-red-300">

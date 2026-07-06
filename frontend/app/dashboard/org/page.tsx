@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, KeySquare, Plus, ScrollText, Trash2, Users } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, isAbortError } from "@/lib/utils";
+import { PageHeader } from "@/components/dashboard/page-header";
 import {
   ApiAuditEntry,
   ApiCapabilities,
@@ -64,6 +65,7 @@ export default function OrganizationPage() {
       if (u.status === "fulfilled") setUsage(u.value);
       if (c.status === "fulfilled") setCapabilities(c.value);
     } catch (e) {
+      if (isAbortError(e)) return;
       if (String(e).includes("Unauthorized")) router.replace("/signin");
       else setError(e instanceof Error ? e.message : "Failed to load organization");
     }
@@ -89,28 +91,19 @@ export default function OrganizationPage() {
   const canManage = org.role === "owner" || org.role === "admin";
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.03]">
-            <Building2 size={15} className="text-white/50" />
-          </div>
-          <div>
-            <h1 className="text-[16px] font-medium text-white">{org.name}</h1>
-            <p className="font-mono text-[10px] uppercase tracking-wider text-white/35">
-              {org.plan.name} plan · {org.member_count} member(s) · your role: {org.role}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1">
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-                    className={cn("rounded-md px-2.5 h-6 font-mono text-[10px] uppercase tracking-wider transition-colors",
-                                  tab === t ? "bg-white/[0.07] text-white" : "text-white/40 hover:text-white")}>
-              {t}
-            </button>
-          ))}
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title={org.name}
+        subtitle={`${org.plan.name} plan · ${org.member_count} member${org.member_count === 1 ? "" : "s"} · your role: ${org.role}`}
+      />
+      <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1 w-fit overflow-x-auto no-scrollbar">
+        {TABS.map((t) => (
+          <button key={t} onClick={() => setTab(t)}
+                  className={cn("rounded-md px-3 h-8 font-mono text-[10px] uppercase tracking-wider transition-colors whitespace-nowrap",
+                                tab === t ? "bg-white/[0.07] text-white" : "text-white/40 hover:text-white")}>
+            {t}
+          </button>
+        ))}
       </div>
 
       {tab === "overview" && <Overview org={org} usage={usage} members={members} secrets={secrets} />}

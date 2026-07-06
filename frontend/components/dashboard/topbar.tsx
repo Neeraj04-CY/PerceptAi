@@ -1,63 +1,94 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
-import { Search, Bell, Command } from "lucide-react";
+import Link from "next/link";
+import { ChevronRight, Command, Search } from "lucide-react";
+import { RuntimeHealth } from "./runtime-health";
+import { openCommandPalette } from "./command-palette";
 
-const titles: Record<string, { title: string; sub: string }> = {
-  "/dashboard": { title: "Run Task", sub: "Spin up a perception-driven agent run in seconds" },
-  "/dashboard/sessions": { title: "Sessions", sub: "Replay, audit, and triage every agent run" },
-  "/dashboard/keys": { title: "API Keys", sub: "Manage credentials for production and dev environments" },
+/** Slim utility bar. It shows a small breadcrumb for context (never a big
+ * page title — pages own that via <PageHeader>), the honest runtime status,
+ * and a real ⌘K command palette trigger. No fake controls. */
+
+const SECTIONS: Record<string, string> = {
+  "/dashboard": "Mission Control",
+  "/dashboard/run": "Run",
+  "/dashboard/missions": "Missions",
+  "/dashboard/studio": "Studio",
+  "/dashboard/sessions": "Sessions",
+  "/dashboard/approvals": "Approvals",
+  "/dashboard/analytics": "Analytics",
+  "/dashboard/org": "Organization",
+  "/dashboard/keys": "API Keys",
 };
+
+function crumbs(pathname: string): Array<{ label: string; href?: string }> {
+  // Exact match first
+  if (SECTIONS[pathname]) return [{ label: SECTIONS[pathname] }];
+  // Detail routes: /dashboard/<section>/<id>
+  const parts = pathname.split("/").filter(Boolean); // ["dashboard","sessions","abc"]
+  if (parts.length >= 3) {
+    const sectionHref = `/${parts[0]}/${parts[1]}`;
+    const section = SECTIONS[sectionHref] || cap(parts[1]);
+    const tail = parts[2].length > 10 ? `${parts[2].slice(0, 8)}…` : parts[2];
+    return [
+      { label: section, href: sectionHref },
+      { label: tail },
+    ];
+  }
+  return [{ label: SECTIONS[`/${parts.join("/")}`] || "Dashboard" }];
+}
+
+function cap(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 export function Topbar() {
   const pathname = usePathname();
-  const meta = titles[pathname] || { title: "Dashboard", sub: "" };
+  const trail = crumbs(pathname);
 
   return (
-    <header
-      className="sticky top-0 z-30 h-[64px] border-b border-white/[0.06] bg-[#050505]/85 backdrop-blur-xl"
-      data-testid="topbar"
-    >
-      <div className="h-full px-6 flex items-center justify-between gap-6">
-        <motion.div
-          key={pathname}
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          className="min-w-0"
-        >
-          <div className="flex items-center gap-2">
-            <h1 className="text-[15px] font-semibold tracking-tight text-white truncate" data-testid="topbar-title">
-              {meta.title}
-            </h1>
-            <span className="hidden sm:inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-              <span className="h-1 w-1 rounded-full bg-accent animate-pulse" />
-              runtime online
+    <header className="sticky top-0 z-30 h-[56px] border-b border-white/[0.06] bg-[#050505]/80 backdrop-blur-xl">
+      <div className="flex h-full items-center justify-between gap-4 px-4 sm:px-6">
+        {/* Breadcrumb — context, not a title */}
+        <nav className="flex min-w-0 items-center gap-1.5 text-[13px]" aria-label="Breadcrumb">
+          {trail.map((c, i) => (
+            <span key={i} className="flex min-w-0 items-center gap-1.5">
+              {i > 0 && <ChevronRight size={13} className="shrink-0 text-white/25" />}
+              {c.href ? (
+                <Link
+                  href={c.href}
+                  className="truncate text-white/45 transition-colors hover:text-white/80"
+                >
+                  {c.label}
+                </Link>
+              ) : (
+                <span className="truncate font-medium text-white/85">{c.label}</span>
+              )}
             </span>
-          </div>
-          <p className="hidden md:block text-[12px] text-white/45 mt-0.5 truncate">{meta.sub}</p>
-        </motion.div>
+          ))}
+        </nav>
 
         <div className="flex items-center gap-2">
           <button
-            className="hidden md:flex items-center gap-2.5 h-9 px-3 rounded-lg border border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04] transition-colors text-[12px] text-white/55"
-            data-testid="topbar-search"
+            onClick={openCommandPalette}
+            data-testid="topbar-command"
+            className="hidden items-center gap-2.5 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 h-8 text-[12.5px] text-white/45 transition-colors hover:bg-white/[0.04] hover:text-white/70 md:flex"
           >
             <Search size={13} />
-            <span>Search sessions, keys…</span>
-            <span className="ml-3 flex items-center gap-0.5 rounded-md border border-white/[0.08] px-1.5 py-0.5 font-mono text-[10px] text-white/40">
+            <span>Search</span>
+            <span className="ml-2 flex items-center gap-0.5 rounded border border-white/[0.1] px-1.5 py-0.5 font-mono text-[10px] text-white/40">
               <Command size={9} /> K
             </span>
           </button>
           <button
-            className="relative h-9 w-9 rounded-lg border border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.04] transition-colors flex items-center justify-center text-white/60"
-            data-testid="topbar-notifications"
-            aria-label="Notifications"
+            onClick={openCommandPalette}
+            aria-label="Search"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.02] text-white/55 transition-colors hover:bg-white/[0.04] md:hidden"
           >
-            <Bell size={14} />
-            <span className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-accent" />
+            <Search size={14} />
           </button>
+          <RuntimeHealth />
         </div>
       </div>
     </header>

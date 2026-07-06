@@ -17,6 +17,7 @@ import {
 import { MissionLive, type MissionWireEvent } from "@/components/dashboard/run/mission-live";
 import { type TimelineStep, type LogLine } from "@/components/dashboard/run/mock-data";
 import { streamPost } from "@/lib/stream";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { cn } from "@/lib/utils";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -320,7 +321,15 @@ export default function RunTaskPage() {
   const missionVisible = mode === "mission" && (missionEvents.length > 0 || running);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
+      <PageHeader
+        title="Run"
+        subtitle={
+          mode === "task"
+            ? "Type a goal in plain English. One agent perceives your screen, plans, acts and verifies — live."
+            : "Type a goal in plain English. An executive decomposes it across specialists and returns one grounded report."
+        }
+      />
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}

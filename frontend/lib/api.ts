@@ -278,6 +278,28 @@ export async function getUsage(signal?: AbortSignal): Promise<UsageStats> {
   return getJsonAuth<UsageStats>("/dashboard/usage", signal);
 }
 
+/* ------------------------------- API keys ------------------------------- */
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  is_active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export interface NewApiKey extends ApiKey {
+  full_key: string;
+}
+
+export const getKeys = (signal?: AbortSignal) =>
+  getJsonAuth<ApiKey[]>("/keys", signal);
+export const createKey = (name: string) =>
+  sendJsonAuth<NewApiKey>("POST", "/keys", { name });
+export const revokeKey = (id: string) =>
+  sendJsonAuth<{ message: string }>("DELETE", `/keys/${encodeURIComponent(id)}`);
+
 /* ------------------------------------------------------------------ */
 /* Platform (Chapter Ω): orgs, missions, workflows, approvals, health  */
 /* ------------------------------------------------------------------ */

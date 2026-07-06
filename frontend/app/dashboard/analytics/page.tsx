@@ -3,19 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Bar,
-  BarChart,
   Cell,
   Pie,
   PieChart,
   ResponsiveContainer,
   Tooltip,
-  XAxis,
-  YAxis,
 } from "recharts";
-import { AlertTriangle, RefreshCcw } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, RefreshCcw, BarChart3, PlayCircle } from "lucide-react";
 import type { DashboardStats, UsageStats } from "@/lib/api";
 import { getDashboardStats, getUsage } from "@/lib/api";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { cn } from "@/lib/utils";
 
 const COLORS = ["#00FF85", "#FF3B3B", "#E8C44A"];
 
@@ -95,15 +94,15 @@ export default function AnalyticsPage() {
     ];
   }, [stats]);
 
-  const usageData = useMemo(() => {
-    if (!usage) return [];
-    const remaining = Math.max(usage.executions_limit - usage.executions_used, 0);
-    return [{
-      name: usage.month,
-      used: usage.executions_used,
-      remaining,
-    }];
-  }, [usage]);
+  const avgDuration = useMemo(() => {
+    if (!stats) return "—";
+    const durs = stats.recent_sessions
+      .map((s) => s.execution_time)
+      .filter((d): d is number => typeof d === "number" && d > 0);
+    if (!durs.length) return "—";
+    const avg = durs.reduce((a, b) => a + b, 0) / durs.length;
+    return `${avg.toFixed(1)}s`;
+  }, [stats]);
 
   if (loading) {
     return (
@@ -155,31 +154,33 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <Header
         title="Analytics"
-        subtitle="Usage, success rate, and runtime performance"
+        subtitle="Usage, outcomes and runtime performance."
       />
 
-      <div className="grid md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <MetricCard label="Total sessions" value={stats.total_sessions} />
-        <MetricCard label="Success rate" value={`${successRate}%`} />
-        <MetricCard label="Failed sessions" value={stats.failed_sessions} />
+        <MetricCard label="Success rate" value={`${successRate}%`} accent />
+        <MetricCard label="Avg duration" value={avgDuration} />
         <MetricCard
           label="Executions this month"
-          value={`${usage.executions_used} / ${usage.executions_limit}`}
+          value={`${usage.executions_used}`}
+          sub={`of ${usage.executions_limit.toLocaleString()}`}
         />
       </div>
 
-      <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4">
-        <GlassCard title="Success vs. Failure">
-          <div className="h-[260px]">
+      <div className="grid lg:grid-cols-[1fr_1.3fr] gap-4 items-start">
+        <GlassCard title="Outcomes">
+          <div className="relative h-[240px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={pieData}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius={60}
-                  outerRadius={90}
-                  paddingAngle={4}
+                  innerRadius={68}
+                  outerRadius={92}
+                  paddingAngle={3}
+                  stroke="none"
                 >
                   {pieData.map((_, idx) => (
                     <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
@@ -196,63 +197,82 @@ export default function AnalyticsPage() {
                 />
               </PieChart>
             </ResponsiveContainer>
-          </div>
-        </GlassCard>
-
-        <GlassCard title="Quota usage">
-          <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={usageData} barGap={6} barCategoryGap={12}>
-                <XAxis dataKey="name" stroke="rgba(255,255,255,0.3)" />
-                <YAxis stroke="rgba(255,255,255,0.3)" />
-                <Tooltip
-                  contentStyle={{
-                    background: "#0A0A0A",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    borderRadius: "8px",
-                    color: "#fff",
-                    fontSize: "12px",
-                  }}
-                />
-                <Bar dataKey="used" stackId="usage" fill={COLORS[0]} radius={[6, 6, 0, 0]} />
-                <Bar dataKey="remaining" stackId="usage" fill="rgba(255,255,255,0.08)" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </GlassCard>
-      </div>
-
-      <GlassCard title="Recent activity">
-        <div className="space-y-3">
-          {stats.recent_sessions.map((session) => (
-            <div
-              key={session.id}
-              className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-lg border border-white/[0.08] bg-white/[0.02] px-4 py-3"
-            >
-              <div>
-                <div className="text-sm text-white/85">{session.instruction}</div>
-                <div className="mt-1 font-mono text-[11px] uppercase tracking-wider text-white/40">
-                  {session.status} · {session.steps_count} steps
-                </div>
-              </div>
-              <div className="font-mono text-[11px] text-white/45">
-                {new Date(session.created_at).toLocaleString()}
-              </div>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-[28px] font-semibold tabular-nums text-white leading-none">{successRate}%</span>
+              <span className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-white/40">success</span>
             </div>
-          ))}
+          </div>
+          <div className="mt-2 flex items-center justify-center gap-5">
+            <Legend color={COLORS[0]} label="Succeeded" value={stats.successful_sessions} />
+            <Legend color={COLORS[1]} label="Failed" value={stats.failed_sessions} />
+          </div>
+        </GlassCard>
+
+        <div className="space-y-4">
+          <GlassCard title={`Quota — ${usage.month}`}>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[24px] font-semibold tabular-nums text-white">
+                {usage.executions_used.toLocaleString()}
+              </span>
+              <span className="font-mono text-[11px] text-white/40">
+                of {usage.executions_limit.toLocaleString()} · {usage.plan.toUpperCase()} · {usage.percentage_used}% used
+              </span>
+            </div>
+            <div className="mt-3 h-2 rounded-full bg-white/[0.06] overflow-hidden">
+              <div
+                className={cnBar(usage.percentage_used)}
+                style={{ width: `${Math.min(100, usage.percentage_used)}%` }}
+              />
+            </div>
+            <p className="mt-3 text-[12px] text-white/40">
+              {Math.max(0, usage.executions_limit - usage.executions_used).toLocaleString()} executions remaining this month.
+            </p>
+          </GlassCard>
+
+          <GlassCard title="Recent activity">
+            <div className="space-y-1.5">
+              {stats.recent_sessions.slice(0, 6).map((session) => (
+                <Link
+                  key={session.id}
+                  href={`/dashboard/sessions/${session.id}`}
+                  className="flex items-center gap-3 rounded-lg px-2 py-2 -mx-2 hover:bg-white/[0.03] transition-colors group"
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full shrink-0",
+                    session.status === "completed" ? "bg-accent" : session.status === "failed" ? "bg-red-400" : "bg-amber-300")} />
+                  <span className="flex-1 min-w-0 truncate text-[13px] text-white/80 group-hover:text-white">
+                    {session.instruction}
+                  </span>
+                  <span className="font-mono text-[10.5px] text-white/35 shrink-0">
+                    {session.steps_count} steps
+                    {session.execution_time ? ` · ${session.execution_time.toFixed(1)}s` : ""}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </GlassCard>
         </div>
-      </GlassCard>
+      </div>
     </div>
   );
 }
 
-function Header({ title, subtitle }: { title: string; subtitle: string }) {
+function Legend({ color, label, value }: { color: string; label: string; value: number }) {
   return (
-    <div className="flex flex-col gap-2">
-      <h1 className="text-2xl md:text-3xl font-semibold text-white">{title}</h1>
-      <p className="text-sm text-white/50 max-w-xl">{subtitle}</p>
+    <div className="flex items-center gap-2">
+      <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+      <span className="text-[12px] text-white/55">{label}</span>
+      <span className="font-mono text-[12px] tabular-nums text-white/80">{value}</span>
     </div>
   );
+}
+
+function cnBar(pct: number): string {
+  const color = pct > 90 ? "bg-red-400" : pct > 70 ? "bg-amber-300" : "bg-accent";
+  return `h-full rounded-full transition-[width] duration-500 ${color}`;
+}
+
+function Header({ title, subtitle }: { title: string; subtitle: string }) {
+  return <PageHeader title={title} subtitle={subtitle} />;
 }
 
 function GlassCard({ title, children }: { title: string; children: React.ReactNode }) {
@@ -266,13 +286,18 @@ function GlassCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string | number }) {
+function MetricCard({ label, value, sub, accent }: { label: string; value: string | number; sub?: string; accent?: boolean }) {
   return (
-    <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl p-4">
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
       <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
         {label}
       </div>
-      <div className="mt-3 text-2xl font-semibold text-white">{value}</div>
+      <div className="mt-2.5 flex items-baseline gap-1.5">
+        <span className={cn("text-[26px] font-semibold tabular-nums leading-none", accent ? "text-accent" : "text-white")}>
+          {value}
+        </span>
+        {sub && <span className="font-mono text-[11px] text-white/35">{sub}</span>}
+      </div>
     </div>
   );
 }
@@ -321,17 +346,38 @@ function EmptyState({
   onAction: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl p-6">
-      <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/40">
-        {title}
+    <div className="space-y-6">
+      <PageHeader title="Analytics" subtitle="Usage, outcomes and runtime performance." />
+      <div className="rounded-xl border border-dashed border-white/[0.1] bg-white/[0.015] px-6 py-16 flex flex-col items-center text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/50">
+          <BarChart3 size={20} strokeWidth={1.6} />
+        </span>
+        <h3 className="mt-4 text-[15px] font-medium text-white">{title}</h3>
+        <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-white/50">{description}</p>
+        <div className="mt-5 flex items-center gap-2.5">
+          <Link
+            href="/dashboard/run"
+            className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 h-9 text-[13px] font-medium text-black transition-shadow hover:shadow-[0_0_36px_-8px_rgba(0,255,133,0.55)]"
+          >
+            <PlayCircle size={14} /> Run your first task
+          </Link>
+          <button
+            onClick={onAction}
+            className="inline-flex items-center gap-2 rounded-full border border-white/[0.1] bg-white/[0.03] px-3.5 h-9 text-[12.5px] text-white/70 hover:text-white transition-colors"
+          >
+            <RefreshCcw size={13} /> {actionLabel}
+          </button>
+        </div>
       </div>
-      <div className="mt-2 text-sm text-white/60">{description}</div>
-      <button
-        onClick={onAction}
-        className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.06] px-4 py-2 text-xs text-white/80 hover:text-white"
-      >
-        {actionLabel}
-      </button>
+      {/* A preview of what lands here once runs complete */}
+      <div className="grid md:grid-cols-4 gap-4 opacity-40 pointer-events-none select-none">
+        {["Total sessions", "Success rate", "Avg duration", "Executions"].map((label) => (
+          <div key={label} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">{label}</div>
+            <div className="mt-3 h-6 w-16 rounded bg-white/[0.06]" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

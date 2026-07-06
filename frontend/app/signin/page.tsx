@@ -1,103 +1,84 @@
-"use client"
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { signIn } from "@/lib/api"
-import { saveToken } from "@/lib/auth"
+"use client";
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { AlertTriangle } from "lucide-react";
+import { signIn } from "@/lib/api";
+import { saveToken } from "@/lib/auth";
+import { AuthShell, AuthField } from "@/components/auth/auth-shell";
 
 export default function SignInPage() {
-  const router = useRouter()
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError("")
+    e.preventDefault();
+    setLoading(true);
+    setError("");
     try {
-      const data = await signIn(email, password)
-      saveToken(data.access_token)
-      document.cookie = `perceptai_token=${data.access_token}; path=/`
-      router.push("/dashboard")
-    } catch (err: any) {
-      setError(err.message || "Invalid credentials")
+      const data = await signIn(email, password);
+      saveToken(data.access_token);
+      document.cookie = `perceptai_token=${data.access_token}; path=/`;
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid credentials");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-[#050505] flex items-center justify-center">
-      <div className="w-full max-w-md px-8">
-        <div className="flex items-center gap-3 mb-12">
-          <div className="w-8 h-8 bg-[#00FF85] rounded-sm flex items-center justify-center">
-            <span className="text-black font-bold text-sm">P</span>
-          </div>
-          <span className="text-white font-bold text-xl tracking-wider">
-            PERCEPTAI
-          </span>
-        </div>
-
-        <h1 className="text-white text-3xl font-bold mb-2">Welcome back</h1>
-        <p className="text-[#888] mb-8">Sign in to your account</p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-[#888] text-sm block mb-2">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              required
-              className="w-full bg-[#0D0D0D] border border-white/10 rounded-lg 
-                px-4 py-3 text-white placeholder-[#555] focus:outline-none 
-                focus:border-[#00FF85]/50 focus:ring-1 focus:ring-[#00FF85]/20
-                transition-all"
-            />
-          </div>
-          <div>
-            <label className="text-[#888] text-sm block mb-2">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-              className="w-full bg-[#0D0D0D] border border-white/10 rounded-lg 
-                px-4 py-3 text-white placeholder-[#555] focus:outline-none 
-                focus:border-[#00FF85]/50 focus:ring-1 focus:ring-[#00FF85]/20
-                transition-all"
-            />
-          </div>
-
-          {error && (
-            <p className="text-[#FF3B3B] text-sm bg-[#FF3B3B]/10 
-              border border-[#FF3B3B]/20 rounded-lg px-4 py-3">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-[#00FF85] hover:bg-[#00e876] text-black 
-              font-semibold py-3 rounded-lg transition-all
-              disabled:opacity-50 disabled:cursor-not-allowed
-              font-mono text-sm tracking-wider"
-          >
-            {loading ? "Signing in..." : "Sign In →"}
-          </button>
-        </form>
-
-        <p className="text-[#555] text-sm mt-6 text-center">
-          No account?{" "}
-          <a href="/signup" className="text-[#00FF85] hover:underline">
+    <AuthShell
+      title="Welcome back"
+      subtitle="Sign in to your PerceptAI workspace."
+      footer={
+        <>
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="text-accent hover:underline">
             Create one
-          </a>
-        </p>
-      </div>
-    </div>
-  )
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField
+          label="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@company.com"
+          autoComplete="email"
+          required
+          autoFocus
+        />
+        <AuthField
+          label="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••••"
+          autoComplete="current-password"
+          required
+        />
+
+        {error && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-400/[0.06] px-3.5 py-2.5 text-[13px] text-red-200">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-1 h-11 w-full rounded-lg bg-accent text-[14px] font-semibold text-black transition-all hover:bg-accent/90 hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.55)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
+    </AuthShell>
+  );
 }

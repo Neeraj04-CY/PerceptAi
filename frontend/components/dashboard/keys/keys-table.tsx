@@ -1,184 +1,176 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Plus, Copy, Check, MoreHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
+import { Plus, ShieldCheck, ShieldOff, KeyRound, AlertTriangle, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { initialKeys, makeFreshKey, type ApiKeyRow } from "./mock";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { CreateKeyModal } from "./create-key-modal";
+import { getKeys, createKey, revokeKey, type ApiKey } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const FULL_KEY_STORAGE_PREFIX = "perceptai_full_key_";
 const ACTIVE_KEY_STORAGE_KEY = "perceptai_active_key";
 
-function storeFullKey(id: string, fullKey: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FULL_KEY_STORAGE_PREFIX + id, fullKey);
-}
-
-function getStoredFullKey(id: string): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(FULL_KEY_STORAGE_PREFIX + id);
-}
-
-function saveActiveKey(fullKey: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ACTIVE_KEY_STORAGE_KEY, fullKey);
-}
-
 export function KeysTable() {
-  const [keys, setKeys] = useState<ApiKeyRow[]>(initialKeys);
+  const router = useRouter();
+  const [keys, setKeys] = useState<ApiKey[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const handleCopy = (key: ApiKeyRow) => {
-    const fullKey = getStoredFullKey(key.id);
-    if (!fullKey) {
-      alert("Full key only shown once at creation. Create a new key to get a copyable key.");
-      return;
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setError(null);
+    try {
+      const data = await getKeys(signal);
+      setKeys(data);
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") return;
+      if ((err as Error).message === "Unauthorized") {
+        router.replace("/signin");
+        return;
+      }
+      setError((err as Error).message || "Failed to load keys");
+      setKeys([]);
     }
-    navigator.clipboard?.writeText(fullKey);
-    setCopiedId(key.id);
-    setTimeout(() => setCopiedId(null), 1200);
+  }, [router]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  const handleCreate = async (name: string): Promise<string> => {
+    const created = await createKey(name);
+    try {
+      window.localStorage.setItem(ACTIVE_KEY_STORAGE_KEY, created.full_key);
+    } catch {
+      /* ignore */
+    }
+    await load();
+    return created.full_key;
   };
 
-  const handleCreate = (name: string, env: ApiKeyRow["env"]) => {
-    const fresh = makeFreshKey(name);
-    const keyPrefix = fresh.slice(0, 12);
-    saveActiveKey(fresh);
-    const newKeyId = "key_" + Math.random().toString(36).slice(2, 10).toUpperCase();
-    const newKey: ApiKeyRow = {
-      id: newKeyId,
-      name,
-      prefix: keyPrefix,
-      env,
-      createdAt: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
-      lastUsed: "never",
-      status: "active",
-      scopes: ["run:write", "run:read"],
-    };
-    storeFullKey(newKeyId, fresh);
-    setKeys((prev) => [newKey, ...prev]);
-    return fresh;
+  const handleRevoke = async (id: string) => {
+    setBusyId(id);
+    try {
+      await revokeKey(id);
+      await load();
+    } catch {
+      /* surfaced on refresh */
+    } finally {
+      setBusyId(null);
+      setConfirmId(null);
+    }
   };
+
+  const activeCount = keys?.filter((k) => k.is_active).length ?? 0;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[15px] font-semibold tracking-tight text-white">Your keys</h2>
-          <p className="mt-1 text-[12.5px] text-white/50 max-w-lg">
-            Each key is signed with HMAC and scoped to a single environment. Revoke instantly — old keys are blacklisted within 200ms globally.
-          </p>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setModalOpen(true)}
-          data-testid="create-key-btn"
-          className="gap-2 shrink-0"
-        >
-          <Plus size={14} strokeWidth={2.5} />
-          New key
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="API Keys"
+        subtitle="Credentials for the PerceptAI runtime. Keys are shown once at creation and hashed at rest — rotate and revoke them here."
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setModalOpen(true)} data-testid="create-key-btn" className="gap-2">
+            <Plus size={14} strokeWidth={2.5} />
+            New key
+          </Button>
+        }
+      />
 
-      {/* Keys table */}
-      <div
-        className="rounded-xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-xl overflow-hidden"
-        data-testid="keys-table"
-      >
-        <div className="grid grid-cols-[1.4fr_1.4fr_110px_110px_110px_60px] gap-3 px-5 py-3 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">
-          <div>Name</div>
-          <div>Key</div>
-          <div>Env</div>
-          <div>Last used</div>
-          <div>Created</div>
-          <div></div>
-        </div>
+      {error ? (
+        <ErrorState message={error} onRetry={() => load()} />
+      ) : keys === null ? (
+        <TableSkeleton />
+      ) : keys.length === 0 ? (
+        <EmptyState onCreate={() => setModalOpen(true)} />
+      ) : (
+        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden" data-testid="keys-table">
+          <div className="hidden sm:grid grid-cols-[1.6fr_1.2fr_130px_130px_88px] gap-3 px-5 py-3 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-[0.2em] text-white/35">
+            <div>Name</div>
+            <div>Key</div>
+            <div>Last used</div>
+            <div>Created</div>
+            <div className="text-right">Status</div>
+          </div>
 
-        {keys.map((k, i) => (
-          <motion.div
-            key={k.id}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: i * 0.04 }}
-            className={cn(
-              "grid grid-cols-[1.4fr_1.4fr_110px_110px_110px_60px] gap-3 px-5 py-3.5 border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors items-center group",
-              k.status === "revoked" && "opacity-55"
-            )}
-            data-testid={`key-row-${k.id}`}
-          >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                {k.status === "active" ? (
-                  <ShieldCheck size={13} className="text-accent shrink-0" />
+          {keys.map((k, i) => (
+            <motion.div
+              key={k.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.3) }}
+              className={cn(
+                "grid grid-cols-1 sm:grid-cols-[1.6fr_1.2fr_130px_130px_88px] gap-x-3 gap-y-1.5 px-5 py-4 border-b border-white/[0.04] last:border-0 items-center group",
+                !k.is_active && "opacity-55"
+              )}
+              data-testid={`key-row-${k.id}`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                {k.is_active ? (
+                  <ShieldCheck size={14} className="text-accent shrink-0" />
                 ) : (
-                  <ShieldOff size={13} className="text-white/30 shrink-0" />
+                  <ShieldOff size={14} className="text-white/30 shrink-0" />
                 )}
-                <span className="text-[13px] text-white truncate">{k.name}</span>
+                <span className="text-[13.5px] text-white truncate">{k.name}</span>
               </div>
-              <div className="mt-1 flex items-center gap-1.5">
-                {k.scopes.map((s) => (
-                  <span
-                    key={s}
-                    className="rounded-sm bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-white/45"
-                  >
-                    {s}
-                  </span>
-                ))}
+
+              <code className="font-mono text-[12.5px] text-white/70 truncate">{k.key_prefix}…</code>
+
+              <div className="font-mono text-[12px] text-white/55">
+                {k.last_used_at ? timeAgo(k.last_used_at) : "never"}
               </div>
-            </div>
+              <div className="font-mono text-[12px] text-white/45">{formatDate(k.created_at)}</div>
 
-            <div className="flex items-center gap-2 min-w-0">
-              <code className="font-mono text-[12px] text-white/75 truncate">{k.prefix}</code>
-              <button
-                onClick={() => handleCopy(k)}
-                disabled={k.status === "revoked"}
-                data-testid={`copy-key-${k.id}`}
-                className="opacity-0 group-hover:opacity-100 transition-opacity rounded-md border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06] h-6 w-6 flex items-center justify-center text-white/65 disabled:opacity-30"
-                aria-label="Copy"
-              >
-                {copiedId === k.id ? <Check size={11} className="text-accent" /> : <Copy size={11} />}
-              </button>
-            </div>
-
-            <div>
-              <span
-                className={cn(
-                  "inline-flex font-mono text-[10px] uppercase tracking-wider rounded-sm px-1.5 py-0.5",
-                  k.env === "production" && "bg-accent/10 text-accent",
-                  k.env === "staging" && "bg-[#E8C44A]/10 text-[#E8C44A]",
-                  k.env === "development" && "bg-white/[0.05] text-white/55"
+              <div className="flex sm:justify-end items-center gap-2">
+                {k.is_active ? (
+                  confirmId === k.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleRevoke(k.id)}
+                        disabled={busyId === k.id}
+                        className="rounded-md bg-red-400/15 px-2 h-6 font-mono text-[10px] uppercase tracking-wider text-red-300 hover:bg-red-400/25 transition-colors disabled:opacity-50"
+                      >
+                        {busyId === k.id ? "…" : "Confirm"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmId(null)}
+                        className="rounded-md px-1.5 h-6 font-mono text-[10px] uppercase tracking-wider text-white/40 hover:text-white transition-colors"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmId(k.id)}
+                      data-testid={`revoke-key-${k.id}`}
+                      className="rounded-md border border-white/[0.08] bg-white/[0.02] px-2.5 h-6 font-mono text-[10px] uppercase tracking-wider text-white/45 hover:text-red-300 hover:border-red-400/30 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
+                    >
+                      Revoke
+                    </button>
+                  )
+                ) : (
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-white/35">revoked</span>
                 )}
-              >
-                {k.env}
-              </span>
-            </div>
-
-            <div className="font-mono text-[11px] text-white/55">{k.lastUsed}</div>
-            <div className="font-mono text-[11px] text-white/45">{k.createdAt}</div>
-            <div className="flex justify-end">
-              <button
-                className="opacity-0 group-hover:opacity-100 transition-opacity rounded-md h-7 w-7 flex items-center justify-center text-white/45 hover:text-white hover:bg-white/[0.04]"
-                aria-label="More actions"
-                data-testid={`key-actions-${k.id}`}
-              >
-                <MoreHorizontal size={14} />
-              </button>
-            </div>
-          </motion.div>
-        ))}
-      </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
 
       {/* Footer note */}
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 flex items-start gap-3">
         <ShieldCheck size={14} className="text-accent mt-0.5 shrink-0" />
         <div>
-          <div className="text-[13px] text-white">Best practices</div>
-          <div className="mt-1 text-[12px] text-white/55 leading-relaxed">
-            Rotate production keys every 90 days. Never commit keys to source control —
-            use environment variables and a secrets manager like Doppler, Vault, or Infisical.
+          <div className="text-[13px] text-white">
+            {activeCount} active {activeCount === 1 ? "key" : "keys"} · best practices
+          </div>
+          <div className="mt-1 text-[12.5px] text-white/55 leading-relaxed">
+            Rotate production keys regularly. Never commit keys to source control —
+            use environment variables or a secrets manager like Doppler, Vault, or Infisical.
           </div>
         </div>
       </div>
@@ -186,4 +178,71 @@ export function KeysTable() {
       <CreateKeyModal open={modalOpen} onOpenChange={setModalOpen} onCreate={handleCreate} />
     </div>
   );
+}
+
+function EmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="rounded-xl border border-dashed border-white/[0.1] bg-white/[0.015] px-6 py-14 flex flex-col items-center text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-white/50">
+        <KeyRound size={20} strokeWidth={1.6} />
+      </span>
+      <h3 className="mt-4 text-[15px] font-medium text-white">No API keys yet</h3>
+      <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-white/50">
+        Create a key to call the runtime from the API, CI, or your own tools.
+        You&apos;ll see the full key once — store it safely.
+      </p>
+      <Button variant="primary" size="sm" onClick={onCreate} className="mt-5 gap-2">
+        <Plus size={14} strokeWidth={2.5} />
+        Create your first key
+      </Button>
+    </div>
+  );
+}
+
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="rounded-xl border border-red-400/25 bg-red-400/[0.05] p-6">
+      <div className="flex items-center gap-2 text-red-300">
+        <AlertTriangle size={15} />
+        <span className="font-mono text-[11px] uppercase tracking-[0.2em]">Couldn&apos;t load keys</span>
+      </div>
+      <p className="mt-2 text-[13px] text-white/70">{message}</p>
+      <button
+        onClick={onRetry}
+        className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.04] px-3.5 h-9 text-[12.5px] text-white/80 hover:text-white transition-colors"
+      >
+        <RefreshCcw size={13} /> Retry
+      </button>
+    </div>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden animate-pulse">
+      {Array.from({ length: 3 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.04] last:border-0">
+          <div className="h-3.5 w-3.5 rounded-full bg-white/10" />
+          <div className="h-3.5 w-40 rounded bg-white/10" />
+          <div className="ml-auto h-3.5 w-24 rounded bg-white/10" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+}
+
+function timeAgo(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const s = Math.max(0, (Date.now() - then) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }

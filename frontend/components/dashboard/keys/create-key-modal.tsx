@@ -5,31 +5,41 @@ import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogBody, Dialo
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Check, Copy, ShieldCheck, AlertTriangle } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreate: (name: string, env: "production" | "staging" | "development") => string;
+  /** Calls the real API; resolves to the one-time full key. */
+  onCreate: (name: string) => Promise<string>;
 }
 
 export function CreateKeyModal({ open, onOpenChange, onCreate }: Props) {
   const [name, setName] = useState("");
-  const [env, setEnv] = useState<"production" | "staging" | "development">("production");
   const [created, setCreated] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setName("");
-    setEnv("production");
     setCreated(null);
     setCopied(false);
+    setBusy(false);
+    setError(null);
   };
 
-  const handleCreate = () => {
-    if (!name.trim()) return;
-    const key = onCreate(name.trim(), env);
-    setCreated(key);
+  const handleCreate = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const key = await onCreate(name.trim());
+      setCreated(key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create key");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleCopy = () => {
@@ -80,7 +90,7 @@ export function CreateKeyModal({ open, onOpenChange, onCreate }: Props) {
             <AlertTriangle size={14} className="text-[#E8C44A] mt-0.5 shrink-0" />
             <p className="text-[12.5px] text-white/65 leading-relaxed">
               For your security, this is the only time the full key will be visible.
-              You can revoke and rotate it from this page at any time.
+              You can revoke it from this page at any time.
             </p>
           </div>
         </DialogBody>
@@ -99,8 +109,8 @@ export function CreateKeyModal({ open, onOpenChange, onCreate }: Props) {
       <DialogHeader>
         <DialogTitle>Create new API key</DialogTitle>
         <DialogDescription>
-          API keys grant access to the PerceptAI runtime. Scope them to environments
-          to limit blast radius.
+          API keys grant access to the PerceptAI runtime. Give each key a
+          descriptive name so you can tell them apart when rotating.
         </DialogDescription>
       </DialogHeader>
 
@@ -114,33 +124,18 @@ export function CreateKeyModal({ open, onOpenChange, onCreate }: Props) {
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
               placeholder="e.g. Production · primary"
               className="mt-2"
               data-testid="new-key-name"
             />
           </div>
-          <div>
-            <label className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/40">
-              Environment
-            </label>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {(["production", "staging", "development"] as const).map((e) => (
-                <button
-                  key={e}
-                  onClick={() => setEnv(e)}
-                  data-testid={`env-${e}`}
-                  className={cn(
-                    "h-10 rounded-lg border text-[12px] capitalize transition-colors",
-                    env === e
-                      ? "border-accent/40 bg-accent/10 text-accent"
-                      : "border-white/[0.08] bg-white/[0.02] text-white/65 hover:border-white/20"
-                  )}
-                >
-                  {e}
-                </button>
-              ))}
+          {error && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-400/25 bg-red-400/[0.06] px-3 py-2 text-[12.5px] text-red-200">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              {error}
             </div>
-          </div>
+          )}
         </div>
       </DialogBody>
 
@@ -153,9 +148,9 @@ export function CreateKeyModal({ open, onOpenChange, onCreate }: Props) {
           size="sm"
           onClick={handleCreate}
           data-testid="confirm-create-key"
-          className={!name.trim() ? "opacity-50 pointer-events-none" : ""}
+          className={!name.trim() || busy ? "opacity-50 pointer-events-none" : ""}
         >
-          Create key
+          {busy ? "Creating…" : "Create key"}
         </Button>
       </DialogFooter>
     </Dialog>

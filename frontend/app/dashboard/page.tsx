@@ -21,6 +21,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/dashboard/page-header";
 import {
   ApiApproval,
   ApiCapabilities,
@@ -104,17 +105,13 @@ export default function MissionControlPage() {
   const firstRun = recentSessions.length === 0 && missions.length === 0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* header + host truth */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[17px] font-medium text-white">Mission Control</h1>
-          <p className="text-[12px] text-white/40 mt-0.5">
-            Live operations across tasks, missions and the workforce.
-          </p>
-        </div>
-        <HealthStrip health={health} />
-      </div>
+      <PageHeader
+        title="Mission Control"
+        subtitle="Live operations across tasks, missions and the workforce."
+        actions={<HealthStrip health={health} />}
+      />
 
       {/* stat strip */}
       <motion.div

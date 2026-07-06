@@ -9,7 +9,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { CalendarClock, FileText, PenTool, Plus } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, isAbortError } from "@/lib/utils";
+import { PageHeader } from "@/components/dashboard/page-header";
 import {
   ApiTemplate,
   ApiWorkflow,
@@ -41,6 +42,7 @@ function Studio() {
       getTemplates(controller.signal),
     ]).then(([w, t]) => {
       if (w.status === "fulfilled") setWorkflows(w.value);
+      else if (isAbortError(w.reason)) { /* ignore */ }
       else if (String(w.reason).includes("Unauthorized")) router.replace("/signin");
       else setError(w.reason instanceof Error ? w.reason.message : "Failed to load workflows");
       if (t.status === "fulfilled") setTemplates(t.value);
@@ -73,18 +75,16 @@ function Studio() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-[17px] font-medium text-white">Agent Studio</h1>
-          <p className="text-[12px] text-white/40 mt-0.5">
-            Reusable automations: parametrized instructions, versioned, schedulable.
-          </p>
-        </div>
-        <button onClick={() => startFrom(null)} disabled={creating !== null}
-                className="inline-flex h-9 items-center gap-2 rounded-full bg-accent px-4 text-[13px] font-medium text-black hover:shadow-[0_0_32px_-8px_rgba(0,255,133,0.6)] transition-shadow disabled:opacity-50">
-          <Plus size={14} strokeWidth={2.4} /> New workflow
-        </button>
-      </div>
+      <PageHeader
+        title="Studio"
+        subtitle="Reusable automations: parametrized instructions, versioned and schedulable."
+        actions={
+          <button onClick={() => startFrom(null)} disabled={creating !== null}
+                  className="inline-flex h-9 items-center gap-2 rounded-full bg-accent px-4 text-[13px] font-medium text-black hover:shadow-[0_0_32px_-8px_rgba(0,255,133,0.6)] transition-shadow disabled:opacity-50">
+            <Plus size={14} strokeWidth={2.4} /> New workflow
+          </button>
+        }
+      />
 
       {error && (
         <div className="rounded-xl border border-red-400/20 bg-red-400/[0.04] px-4 py-3 text-[12px] text-red-300">

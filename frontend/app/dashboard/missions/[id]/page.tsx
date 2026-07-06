@@ -9,7 +9,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, isAbortError } from "@/lib/utils";
 import {
   ApiEventRow,
   ApiMission,
@@ -34,6 +34,7 @@ export default function MissionDetailPage() {
       getMissionEvents(id, 0, controller.signal),
     ]).then(([m, e]) => {
       if (m.status === "fulfilled") setMission(m.value);
+      else if (isAbortError(m.reason)) { /* ignore */ }
       else if (String(m.reason).includes("Unauthorized")) router.replace("/signin");
       else setError(m.reason instanceof Error ? m.reason.message : "Failed to load mission");
       if (e.status === "fulfilled") setEvents(e.value);
