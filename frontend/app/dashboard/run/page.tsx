@@ -15,8 +15,15 @@ import {
   type ReasoningStream,
 } from "@/components/dashboard/run/reasoning-panel";
 import { MissionLive, type MissionWireEvent } from "@/components/dashboard/run/mission-live";
+import {
+  ExecutionCockpit,
+  emptyCockpit,
+  applyCockpitEvent,
+  type CockpitState,
+} from "@/components/dashboard/run/execution-cockpit";
 import { type TimelineStep, type LogLine } from "@/components/dashboard/run/mock-data";
 import { streamPost } from "@/lib/stream";
+import { sendControl, decideApproval, type ControlAction, type ApprovalDecision } from "@/lib/control";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { cn } from "@/lib/utils";
 
@@ -40,11 +47,14 @@ export default function RunTaskPage() {
   const [worlds, setWorlds] = useState<WorldSnapshot[]>([]);
   const [reasoning, setReasoning] = useState<ReasoningStream>(emptyReasoning());
   const [missionEvents, setMissionEvents] = useState<MissionWireEvent[]>([]);
+  const [cockpit, setCockpit] = useState<CockpitState>(emptyCockpit());
   const [running, setRunning] = useState(false);
   const [meta, setMeta] = useState<SessionMeta>(makeInitialMeta());
   const [initialTask, setInitialTask] = useState<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const runStartRef = useRef<number | null>(null);
+  const apiKeyRef = useRef<string>("");
+  const sessionIdRef = useRef<string>("");
 
   // Handoff from Studio: a rendered workflow lands here prefilled.
   useEffect(() => {
@@ -69,6 +79,8 @@ export default function RunTaskPage() {
     setWorlds([]);
     setReasoning(emptyReasoning());
     setMissionEvents([]);
+    setCockpit(emptyCockpit());
+    sessionIdRef.current = "";
   }, []);
 
   const prepareRun = useCallback(async (): Promise<string | null> => {
@@ -86,6 +98,7 @@ export default function RunTaskPage() {
     }
     try {
       const apiKey = await ensureApiKey(token);
+      apiKeyRef.current = apiKey;
       setMeta((m) => ({ ...m, apiKey: maskKey(apiKey) }));
       return apiKey;
     } catch (err) {
@@ -138,8 +151,10 @@ export default function RunTaskPage() {
 
     try {
       await streamPost("/execute/stream", { instruction: task }, apiKey, (event: any) => {
+        setCockpit((c) => applyCockpitEvent(c, event));
         switch (event.type) {
           case "session_id":
+            sessionIdRef.current = String(event.session_id);
             setMeta((m) => ({ ...m, id: event.session_id }));
             break;
 
@@ -303,6 +318,40 @@ export default function RunTaskPage() {
     setLogs((prev) => [...prev, { ts: "—", level: "err", msg: "run aborted by user" }]);
   };
 
+  // Cockpit controls. Pause/resume/stop go through the engine's control
+  // channel so the run stops at a safe checkpoint (not a hard socket abort);
+  // if the channel is already gone we fall back to aborting the stream.
+  const handleControl = useCallback(async (action: ControlAction) => {
+    const id = sessionIdRef.current;
+    const key = apiKeyRef.current;
+    if (!id || !key) {
+      if (action === "stop") handleStop();
+      return;
+    }
+    try {
+      await sendControl(id, action, key);
+      setLogs((prev) => [...prev, { ts: formatTime(new Date()), level: "info", msg: `control: ${action}` }]);
+    } catch (err) {
+      if (action === "stop") handleStop();
+      else setLogs((prev) => [...prev, { ts: "—", level: "err",
+        msg: err instanceof Error ? err.message : `control ${action} failed` }]);
+    }
+  }, []);
+
+  const handleApproval = useCallback(async (requestId: string, decision: ApprovalDecision) => {
+    const id = sessionIdRef.current;
+    const key = apiKeyRef.current;
+    if (!id || !key) return;
+    try {
+      await decideApproval(id, requestId, decision, key);
+      setLogs((prev) => [...prev, { ts: formatTime(new Date()), level: decision === "grant" ? "ok" : "info",
+        msg: `approval ${decision === "grant" ? "granted" : "denied"}` }]);
+    } catch (err) {
+      setLogs((prev) => [...prev, { ts: "—", level: "err",
+        msg: err instanceof Error ? err.message : "approval failed" }]);
+    }
+  }, []);
+
   // Live duration ticker
   useEffect(() => {
     if (!running) return;
@@ -369,6 +418,12 @@ export default function RunTaskPage() {
         <MissionLive events={missionEvents} running={running} />
       ) : (
         <>
+          <ExecutionCockpit
+            state={cockpit}
+            running={running}
+            onControl={handleControl}
+            onApproval={handleApproval}
+          />
           <ExecutionTimeline steps={steps} activeIndex={activeIndex} visible={timelineVisible} />
           <ReasoningPanel stream={reasoning} />
           <WorldModelPanel snapshots={worlds} />

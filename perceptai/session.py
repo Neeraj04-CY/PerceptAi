@@ -16,7 +16,9 @@ from .actions import ActionExecutor
 from .config import EngineConfig
 from .constraints import ConstraintManager
 from .contracts import Task, TaskResult
+from .control import ControlChannel
 from .events import EventBus, EventType
+from .risk import RiskAssessor
 from .evidence import EvidenceCollector
 from .goal import GoalAnalyzer
 from .healer import Healer
@@ -56,6 +58,8 @@ class AgentSession:
         reasoning: Optional[ReasoningEngine] = None,
         recovery: Optional[RecoveryManager] = None,
         constraints: Optional[ConstraintManager] = None,
+        control: Optional[ControlChannel] = None,
+        risk: Optional[RiskAssessor] = None,
     ):
         self.config = config or EngineConfig.from_env()
         self.id = str(uuid.uuid4())
@@ -91,6 +95,11 @@ class AgentSession:
             self.config, self.healer, HypothesisGenerator(self.config)
         )
         self.constraints = constraints or ConstraintManager(self.config)
+        # Trust layer: control is the interruptibility surface (pass-through
+        # unless a controller attaches); risk is the deterministic "what could
+        # go wrong" signal read before every input action.
+        self.control = control or ControlChannel()
+        self.risk = risk or RiskAssessor(self.config)
 
     def emit(self, type: EventType, task: Task, **payload) -> None:
         self.events.emit(type, session_id=self.id, task_id=task.id, **payload)

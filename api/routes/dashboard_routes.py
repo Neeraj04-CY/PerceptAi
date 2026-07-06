@@ -77,7 +77,7 @@ async def get_session(
     if not result.data:
         from fastapi import HTTPException
         raise HTTPException(404, "Session not found")
-    
+
     return result.data[0]
 
 @router.get("/usage", response_model=UsageResponse)

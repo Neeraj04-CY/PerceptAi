@@ -41,6 +41,17 @@ class EventType(str, Enum):
     HYPOTHESIS_RESOLVED = "hypothesis_resolved"  # confirmed or rejected
     RECOVERY_STARTED = "recovery_started"
     RECOVERY_COMPLETED = "recovery_completed"
+    # Trust layer (Sprint 3). Control and governance ride the same canonical
+    # bus: pause/resume/stop are read at the per-cycle checkpoint, risk is
+    # observed per step, approval is a live grant-ahead gate. Consumers (the
+    # cockpit, the trust-timeline replay, the audit log) derive views; they
+    # never rebuild these.
+    EXECUTION_PAUSED = "execution_paused"
+    EXECUTION_RESUMED = "execution_resumed"
+    EXECUTION_STOPPED = "execution_stopped"
+    RISK_FLAGGED = "risk_flagged"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_DECIDED = "approval_decided"
     # Mission stream (Chapter 5). The workforce layer emits on the same
     # canonical bus; task_id carries the mission id, payloads carry work
     # order ids. Consumers derive mission views, never rebuild them.

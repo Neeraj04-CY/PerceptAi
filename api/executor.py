@@ -57,9 +57,14 @@ def _engine_config(EngineConfig):
     return engine_config
 
 
-def _make_session(AgentSession, EngineConfig):
+def _make_session(AgentSession, EngineConfig, *, control=None, overrides=None):
     global _last_session
-    session = AgentSession(_engine_config(EngineConfig))
+    config = _engine_config(EngineConfig)
+    for key, value in (overrides or {}).items():
+        if value not in (None, ""):
+            setattr(config, key, value)
+    session = AgentSession(config, control=control) if control is not None \
+        else AgentSession(config)
     with _registry_lock:
         _last_session = session
     return session
@@ -125,19 +130,26 @@ def execute_task(instruction: str) -> Tuple[Optional[object], Optional[str]]:
         return None, str(e)
 
 
-def execute_task_stream(instruction: str) -> Generator[dict, None, None]:
+def execute_task_stream(instruction: str, *, control=None,
+                        approval_risk_threshold: str = "") -> Generator[dict, None, None]:
     """Run one task, yielding dashboard-format SSE dicts as events happen.
 
-    The final yielded item has type "_result" carrying the full TaskResult
-    plus the captured canonical events; the HTTP layer persists both and
-    must not forward them to clients.
+    `control` is an optional perceptai ControlChannel (from the API's control
+    registry) that makes the run pausable/stoppable and gates risky actions on
+    approval; `approval_risk_threshold` is the workspace risk policy (as data)
+    that decides when approval is required. The final yielded item has type
+    "_result" carrying the full TaskResult plus the captured canonical events;
+    the HTTP layer persists both and must not forward them to clients.
     """
     AgentSession, EngineConfig, to_legacy_sse, legacy_steps, err = _load_engine()
     if err:
         yield {"type": "error", "message": err}
         return
 
-    session = _make_session(AgentSession, EngineConfig)
+    session = _make_session(
+        AgentSession, EngineConfig, control=control,
+        overrides={"approval_risk_threshold": approval_risk_threshold},
+    )
     for item in _relay(session.events, lambda: session.run(instruction),
                        to_legacy_sse):
         if isinstance(item, tuple):

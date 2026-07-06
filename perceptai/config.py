@@ -46,6 +46,17 @@ class EngineConfig:
     slow_provider_ms: float = 8000.0        # provider latency that suggests a busy/loading app
     blocked_window_titles: list = field(default_factory=list)  # policy: never send input to these
 
+    # Trust layer (Sprint 3) — control checkpoint + risk-gated approval.
+    # Risk *observation* is always on (pure observability, emitted per step).
+    # Risk *gating* is off by default: a run behaves exactly as before unless
+    # a workspace policy sets an approval threshold. Budgets bound every wait
+    # so a paused or approval-blocked run can never hang the host.
+    risk_detection_enabled: bool = True
+    approval_risk_threshold: str = ""       # "" (off) | "low" | "medium" | "high": gate at/above this level
+    max_pause_s: float = 900.0              # a paused run resumes or is stopped within this budget
+    max_approval_wait_s: float = 600.0      # an unanswered approval denies (honest) after this budget
+    control_poll_s: float = 0.25            # cadence the checkpoint re-reads control state while parked
+
     # Perception
     fast_cache_ttl_s: float = 0.8
     ocr_max_side: int = 960

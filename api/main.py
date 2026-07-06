@@ -13,6 +13,7 @@ from events_store import EventBuffer
 from models import ExecuteRequest
 from routes.analytics_routes import router as analytics_router
 from routes.approval_routes import router as approval_router
+from routes.control_routes import router as control_router
 from routes.auth_routes import router as auth_router
 from routes.dashboard_routes import router as dashboard_router
 from routes.execute_routes import router as execute_router
@@ -56,6 +57,7 @@ app.include_router(workflow_router, prefix="/api/v1")
 app.include_router(approval_router, prefix="/api/v1")
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
+app.include_router(control_router, prefix="/api/v1")
 
 
 @app.on_event("startup")
@@ -114,6 +116,13 @@ async def execute_stream(
     except Exception:
         db.table("sessions").insert(row).execute()
 
+    # Trust layer: make this execution pausable/stoppable and, if the
+    # workspace risk policy asks, gate risky actions on approval. The control
+    # channel is looked up by session id from the control endpoints.
+    from control_registry import registry
+    approval_threshold = _workspace_approval_threshold(db, body.workspace_id)
+    control = registry().open(session_id)
+
     async def generate():
         yield sse({"type": "session_id", "session_id": session_id})
         yield sse({"type": "log", "message": "Runtime connected"})
@@ -122,7 +131,11 @@ async def execute_stream(
         final = {"status": "completed", "execution_time": 0.0,
                  "result": None, "error": None, "events": []}
 
-        async for event in athread_iter(execute_task_stream(body.instruction)):
+        stream = execute_task_stream(
+            body.instruction, control=control,
+            approval_risk_threshold=approval_threshold,
+        )
+        async for event in athread_iter(stream):
             if event is None:
                 yield KEEPALIVE
                 continue
@@ -164,9 +177,25 @@ async def execute_stream(
         buffer.flush(db, "session", session_id)
 
         increment_usage(user_id, session_id)
+        registry().close(session_id)
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers=SSE_HEADERS)
+
+
+def _workspace_approval_threshold(db, workspace_id) -> str:
+    """The workspace's risk-approval threshold (policy as data). Empty string
+    when no workspace, no policy, or scoping predates the platform migration
+    — execution must never fail over trust-policy lookup."""
+    if not workspace_id:
+        return ""
+    try:
+        rows = db.table("workspaces").select("policy").eq(
+            "id", workspace_id).limit(1).execute().data or []
+        policy = (rows[0].get("policy") if rows else None) or {}
+        return str(policy.get("approval_risk_threshold", "") or "")
+    except Exception:
+        return ""
 
 
 @app.get("/")

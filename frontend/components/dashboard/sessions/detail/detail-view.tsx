@@ -18,6 +18,7 @@ import { SessionStatusPill } from "@/components/dashboard/sessions/session-statu
 import { MetricCard } from "./metric-card";
 import { PerceptionCard } from "./perception-card";
 import { ReasoningCard } from "./reasoning-card";
+import { TrustTimeline } from "./trust-timeline";
 import { ReportCard } from "./report-card";
 import { StepTimeline } from "./step-timeline";
 import { RuntimeLogs } from "./runtime-logs";
@@ -216,6 +217,9 @@ function Loaded({
       {session.result?.metadata?.reasoning && (
         <ReasoningCard reasoning={session.result.metadata.reasoning} />
       )}
+
+      {/* What was governed — risks, approvals, and human interventions */}
+      <TrustTimeline sessionId={session.id} />
 
       {/* Timeline */}
       <StepTimeline steps={session.steps || []} />

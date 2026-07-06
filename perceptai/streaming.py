@@ -26,6 +26,17 @@ _REASONING_EVENTS = frozenset({
     EventType.RECOVERY_COMPLETED,
 })
 
+# Trust-layer events share one additive SSE type, same pattern as reasoning:
+# old clients ignore the unknown `trust` type; the cockpit switches on `kind`.
+_TRUST_EVENTS = frozenset({
+    EventType.EXECUTION_PAUSED,
+    EventType.EXECUTION_RESUMED,
+    EventType.EXECUTION_STOPPED,
+    EventType.RISK_FLAGGED,
+    EventType.APPROVAL_REQUESTED,
+    EventType.APPROVAL_DECIDED,
+})
+
 
 def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
     """Map a canonical TaskEvent to the dashboard's SSE dict schema.
@@ -34,6 +45,10 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
 
     if event.type in _REASONING_EVENTS:
         return {"type": "reasoning", "kind": event.type.value,
+                **p, "timestamp": event.timestamp}
+
+    if event.type in _TRUST_EVENTS:
+        return {"type": "trust", "kind": event.type.value,
                 **p, "timestamp": event.timestamp}
 
     if event.type == EventType.TASK_STARTED:

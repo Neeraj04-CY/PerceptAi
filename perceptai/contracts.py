@@ -415,6 +415,86 @@ class RecoveryOutcome:
         return _plain(self)
 
 
+# ------------------------------------------------ trust & control (Sprint 3)
+# The Enterprise Trust Layer: a running execution is legible, governed and
+# interruptible. These types cross the engine <-> API boundary (control
+# endpoints, approval routing, cockpit replay) and so live here, not in the
+# transport. The engine reads control at its existing per-cycle checkpoint;
+# it never grows a second loop.
+
+class RunControl(str, Enum):
+    """The live control state of one execution."""
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPING = "stopping"  # a stop was requested; the run ends at the next checkpoint
+
+
+class ControlAction(str, Enum):
+    """A control intent delivered from outside the run (API, future runner)."""
+    PAUSE = "pause"
+    RESUME = "resume"
+    STOP = "stop"
+
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+_RISK_ORDER = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2}
+
+
+@dataclass
+class RiskFlag:
+    """A deterministically detected risk on an imminent action. Observed and
+    emitted for every risky step (pure observability); it only *gates*
+    execution when workspace policy sets an approval threshold."""
+    kind: str          # irreversible | financial | communication | credentials | low_confidence
+    level: RiskLevel
+    summary: str       # one line the cockpit shows the operator
+    detail: str = ""
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+class ApprovalDecision(str, Enum):
+    GRANT = "grant"
+    DENY = "deny"
+
+
+@dataclass
+class ApprovalRequest:
+    """A pause-for-approval on a risky step. Grant-ahead workspace approvals
+    live in the DB; this is the live, in-execution request the operator sees."""
+    request_id: str
+    step_index: int
+    action: str
+    summary: str
+    level: RiskLevel = RiskLevel.MEDIUM
+    risks: list[RiskFlag] = field(default_factory=list)
+    requested_at: str = field(default_factory=utc_now_iso)
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
+@dataclass
+class ApprovalResolution:
+    """How an ApprovalRequest was settled. `auto` marks a non-interactive
+    host with no approver attached — the run proceeds exactly as it did
+    before the trust layer existed (risk is still observed and emitted)."""
+    decision: ApprovalDecision
+    decided_by: str = ""
+    reason: str = ""
+    auto: bool = False
+    decided_at: str = field(default_factory=utc_now_iso)
+
+    def to_dict(self) -> dict:
+        return _plain(self)
+
+
 # ------------------------------------------------------------------- tasks
 
 class TaskStatus(str, Enum):
@@ -666,8 +746,9 @@ class TaskResult:
     # Structured cause when the task did not fully succeed, drawn from the
     # healer/hypothesis taxonomy (modal_dialog | loading | focus_lost |
     # window_changed | element_renamed | wrong_app | app_not_open |
-    # element_not_found | unverified | unknown). None when COMPLETED. Persisted
-    # so analytics can report failure causes without re-deriving them.
+    # element_not_found | unverified | unknown) plus trust-layer causes
+    # (stopped | approval_denied). None when COMPLETED. Persisted so analytics
+    # can report failure causes without re-deriving them.
     failure_type: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

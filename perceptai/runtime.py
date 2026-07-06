@@ -15,16 +15,21 @@ diagnose / judge boundaries — the reasoning cycle itself is deterministic.
 from __future__ import annotations
 
 import time
+import uuid
 from collections import deque
 from typing import TYPE_CHECKING, Optional
 
 from .contracts import (
     ActionOutcome,
     ActionType,
+    ApprovalDecision,
+    ApprovalRequest,
     Artifact,
+    ConstraintVerdict,
     DecisionType,
     ExecutionState,
     PlannerOutput,
+    RunControl,
     Step,
     StepResult,
     StepStatus,
@@ -133,6 +138,14 @@ class ExecutionEngine:
 
         queue = deque(initial)
         while rstate.cycle < self._config.max_cycles:
+            # Trust checkpoint: read external control before deciding anything.
+            # Pause parks here (bounded); stop ends the run on the clean abort
+            # path. No second loop — control is data read at the boundary.
+            if self._control_checkpoint(task):
+                state.last_failure_type = "stopped"
+                errors.append("Execution stopped by user")
+                break
+
             decision = reasoning.decide(
                 rstate, queue_len=len(queue), execution=state, context=context,
                 executed=executed, llm_calls=int(getattr(self._s.llm, "calls", 0) or 0),
@@ -314,6 +327,84 @@ class ExecutionEngine:
             return steps
         return None
 
+    # -------------------------------------------------------- trust & control
+
+    def _control_checkpoint(self, task: Task) -> bool:
+        """Read external control at the cycle boundary. Returns True to stop.
+        Parks (bounded) while paused, emitting canonical pause/resume events
+        so the cockpit and the replay always know the run's control state."""
+        channel = self._s.control
+        state = channel.state()
+
+        if state == RunControl.STOPPING:
+            self._s.emit(EventType.EXECUTION_STOPPED, task, reason="stopped by user")
+            return True
+
+        if state == RunControl.PAUSED:
+            self._s.emit(EventType.EXECUTION_PAUSED, task,
+                         reason="paused by user", budget_s=self._config.max_pause_s)
+            state = channel.wait_for_change(self._config.max_pause_s)
+            if state == RunControl.STOPPING:
+                self._s.emit(EventType.EXECUTION_STOPPED, task, reason="stopped while paused")
+                return True
+            if state == RunControl.PAUSED:
+                # Budget exhausted: never hang the host — end honestly.
+                self._s.emit(EventType.EXECUTION_STOPPED, task,
+                             reason="pause budget exhausted")
+                return True
+            self._s.emit(EventType.EXECUTION_RESUMED, task, reason="resumed by user")
+        return False
+
+    def _trust_gate(self, task: Task, step: Step, index: int,
+                    state: ExecutionState) -> ConstraintVerdict:
+        """Assess risk (always) and gate on approval (only if policy asks).
+        Emits RISK_FLAGGED for every risky step and, when gated, the full
+        approval round-trip. A DENY is returned as a ConstraintVerdict so the
+        existing plan-around machinery owns the outcome."""
+        risk = self._s.risk
+        flags = risk.assess(step, self._last_world)
+        if not flags:
+            return ConstraintVerdict(allowed=True)
+
+        level = risk.peak_level(flags)
+        self._s.emit(
+            EventType.RISK_FLAGGED, task,
+            step_number=index, action=step.action.value, description=step.description,
+            level=level.value, summary="; ".join(f.summary for f in flags),
+            risks=[f.to_dict() for f in flags],
+        )
+
+        if not risk.requires_approval(flags):
+            return ConstraintVerdict(allowed=True)
+
+        request = ApprovalRequest(
+            request_id=uuid.uuid4().hex[:12], step_index=index,
+            action=step.action.value, summary=step.description,
+            level=level, risks=flags,
+        )
+        self._s.emit(
+            EventType.APPROVAL_REQUESTED, task,
+            request_id=request.request_id, step_number=index,
+            action=request.action, summary=request.summary, level=level.value,
+            risks=[f.to_dict() for f in flags],
+        )
+        resolution = self._s.control.request_approval(
+            request, self._config.max_approval_wait_s)
+        self._s.emit(
+            EventType.APPROVAL_DECIDED, task,
+            request_id=request.request_id, step_number=index,
+            decision=resolution.decision.value, auto=resolution.auto,
+            decided_by=resolution.decided_by, reason=resolution.reason,
+        )
+
+        if resolution.decision == ApprovalDecision.DENY:
+            state.last_failure_type = "approval_denied"
+            return ConstraintVerdict(
+                allowed=False, constraint="approval",
+                reason=resolution.reason or "approval denied by operator",
+            )
+        return ConstraintVerdict(allowed=True)
+
     # ------------------------------------------------------------ stepping
 
     def _run_step(self, task: Task, step: Step, context: TaskContext,
@@ -329,6 +420,11 @@ class ExecutionEngine:
         started_at = utc_now_iso()
         t0 = time.time()
         verdict = self._s.constraints.check_step(step, self._last_world)
+        if verdict.allowed:
+            # Trust gate: observe risk, and (only if policy sets a threshold)
+            # pause for approval. A denial is a first-class outcome that flows
+            # through the same "fail -> plan around it" path as a constraint.
+            verdict = self._trust_gate(task, step, index, state)
         if not verdict.allowed:
             outcome = ActionOutcome(
                 ok=False,
