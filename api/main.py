@@ -11,6 +11,7 @@ from config import config
 from database import get_service_db
 from events_store import EventBuffer
 from models import ExecuteRequest
+from routes.analytics_routes import router as analytics_router
 from routes.approval_routes import router as approval_router
 from routes.auth_routes import router as auth_router
 from routes.dashboard_routes import router as dashboard_router
@@ -54,6 +55,7 @@ app.include_router(mission_router, prefix="/api/v1")
 app.include_router(workflow_router, prefix="/api/v1")
 app.include_router(approval_router, prefix="/api/v1")
 app.include_router(platform_router, prefix="/api/v1")
+app.include_router(analytics_router, prefix="/api/v1")
 
 
 @app.on_event("startup")

@@ -40,6 +40,32 @@ def test_no_plan_fails_structurally(harness):
     assert [e.type for e in events][-1] == EventType.TASK_COMPLETED
 
 
+def test_failure_type_none_on_success(harness):
+    session, fakes, events = harness(
+        plans=[
+            [
+                _step("open_app", "open notepad", app="notepad", wait=0.0),
+                _step("type", "type hello", text="hello world", app="notepad"),
+            ]
+        ],
+    )
+    result = session.run("open notepad and type hello world")
+    assert result.status == TaskStatus.COMPLETED
+    # A completed run carries no structured failure cause, and it round-trips.
+    assert result.failure_type is None
+    assert result.to_dict()["failure_type"] is None
+
+
+def test_failure_type_set_and_persisted_on_failure(harness):
+    session, fakes, events = harness(plans=[])
+    result = session.run("do something impossible")
+    assert result.status == TaskStatus.FAILED
+    # An unclassified structural failure still reports a concrete cause,
+    # and it is present in the persisted (serialized) result for analytics.
+    assert result.failure_type == "unknown"
+    assert result.to_dict()["failure_type"] == "unknown"
+
+
 def test_click_finds_element_via_ocr(harness):
     session, fakes, events = harness(
         plans=[[_step("click", "click submit", find="Submit", app="myapp")]],

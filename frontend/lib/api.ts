@@ -300,6 +300,89 @@ export const createKey = (name: string) =>
 export const revokeKey = (id: string) =>
   sendJsonAuth<{ message: string }>("DELETE", `/keys/${encodeURIComponent(id)}`);
 
+/* ---------------------- Analytics V2 (unified summary) ------------------- */
+
+export type AnalyticsRangeKey = "7d" | "30d" | "90d";
+export type AnalyticsKind = "all" | "task" | "mission";
+
+export interface AnalyticsTotals {
+  runs: number;
+  tasks: number;
+  missions: number;
+  succeeded: number;
+  needs_attention: number;
+  failed: number;
+  success_rate: number;
+  verification_rate: number;
+}
+
+export interface AnalyticsTimePoint {
+  date: string;
+  success: number;
+  attention: number;
+  failure: number;
+}
+
+export interface AnalyticsLatency {
+  p50_s: number | null;
+  p95_s: number | null;
+  avg_s: number | null;
+  series: Array<{ date: string; p50: number | null }>;
+}
+
+export interface AnalyticsCalibration {
+  buckets: Array<{ lo: number; hi: number; n: number; actual_success: number | null }>;
+  mean_error: number | null;
+  verification_accuracy: number | null;
+  sample_size: number;
+}
+
+export interface AnalyticsFailure {
+  type: string;
+  label: string;
+  count: number;
+}
+
+export interface AnalyticsMissionsBlock {
+  count: number;
+  reassignments: number;
+  duplicates_cancelled: number;
+  avg_orders: number;
+  cost_total: number;
+  specialist_utilization: Record<string, number>;
+}
+
+export interface AnalyticsRecommendation {
+  severity: "high" | "medium" | "info";
+  title: string;
+  detail: string;
+  metric: string;
+}
+
+export interface AnalyticsSummary {
+  range: { days: number; start: string; end: string };
+  kind: AnalyticsKind;
+  totals: AnalyticsTotals;
+  timeseries: AnalyticsTimePoint[];
+  latency: AnalyticsLatency;
+  calibration: AnalyticsCalibration;
+  failures: AnalyticsFailure[];
+  cost: {
+    executions_used: number;
+    executions_limit: number;
+    percentage_used: number;
+    mission_cost_total: number;
+  };
+  missions: AnalyticsMissionsBlock | null;
+  recommendations: AnalyticsRecommendation[];
+}
+
+export const getAnalyticsSummary = (
+  range: AnalyticsRangeKey,
+  kind: AnalyticsKind,
+  signal?: AbortSignal,
+) => getJsonAuth<AnalyticsSummary>(`/analytics/summary?range=${range}&kind=${kind}`, signal);
+
 /* ------------------------------------------------------------------ */
 /* Platform (Chapter Ω): orgs, missions, workflows, approvals, health  */
 /* ------------------------------------------------------------------ */

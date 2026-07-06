@@ -566,6 +566,10 @@ class ExecutionEngine:
                 continue
 
             reasoning.record_recovery(rstate, plan, attempt)
+            # Retain the classified cause so the final TaskResult can report a
+            # structured failure_type even if recovery ultimately fails.
+            if plan.chosen and plan.chosen.kind:
+                state.last_failure_type = plan.chosen.kind
             self._s.emit(
                 EventType.HEALING_RESULT, task, healed=False,
                 diagnosis=plan.chosen.explanation if plan.chosen else "no viable recovery",
@@ -819,6 +823,17 @@ class ExecutionEngine:
             except Exception:
                 pass
 
+        # Structured failure cause for reporting/analytics. COMPLETED runs
+        # carry none; UNVERIFIED means steps ran but the outcome couldn't be
+        # confirmed; FAILED reuses the healer's last classification, falling
+        # back to a generic cause when nothing classified it.
+        if status == TaskStatus.COMPLETED:
+            failure_type = None
+        elif status == TaskStatus.UNVERIFIED:
+            failure_type = "unverified"
+        else:
+            failure_type = state.last_failure_type or "unknown"
+
         result = TaskResult(
             task_id=task.id,
             instruction=task.instruction,
@@ -833,6 +848,7 @@ class ExecutionEngine:
             duration_s=duration,
             errors=errors,
             confidence=report.confidence,
+            failure_type=failure_type,
             metadata=metadata,
         )
 

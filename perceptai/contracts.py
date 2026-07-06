@@ -643,6 +643,9 @@ class ExecutionState:
     llm_calls: int = 0
     vision_escalations: int = 0
     cycles: int = 0
+    # Most recent failure classification from the healer, retained so the
+    # final TaskResult can report a structured cause even after recovery ran.
+    last_failure_type: str = ""
 
 
 @dataclass
@@ -660,6 +663,12 @@ class TaskResult:
     duration_s: float = 0.0
     errors: list[str] = field(default_factory=list)
     confidence: float = 0.0
+    # Structured cause when the task did not fully succeed, drawn from the
+    # healer/hypothesis taxonomy (modal_dialog | loading | focus_lost |
+    # window_changed | element_renamed | wrong_app | app_not_open |
+    # element_not_found | unverified | unknown). None when COMPLETED. Persisted
+    # so analytics can report failure causes without re-deriving them.
+    failure_type: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
