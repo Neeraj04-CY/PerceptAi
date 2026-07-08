@@ -18,6 +18,13 @@ class Config:
     # Secrets vault encryption key; falls back to JWT_SECRET so a single
     # secret works out of the box. Set separately in production.
     SECRETS_KEY = os.getenv("SECRETS_KEY") or os.getenv("JWT_SECRET", "change-this-secret")
+    # Server secret used to derive per-runner work-order signing keys. Falls
+    # back to SECRETS_KEY out of the box; set separately in production.
+    RUNNER_SIGNING_KEY = os.getenv("RUNNER_SIGNING_KEY") or os.getenv("SECRETS_KEY") \
+        or os.getenv("JWT_SECRET", "change-this-secret")
+    # Lease a runner holds on a claimed session; renewed by heartbeat. A run
+    # whose runner stops heartbeating past this is reclaimed to the queue.
+    RUNNER_LEASE_SECONDS = int(os.getenv("RUNNER_LEASE_SECONDS", "90"))
     # Scheduled workflows execute on THIS host's desktop. Off by default;
     # enable only on a machine dedicated to running automations.
     ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "false").lower() in ("1", "true", "yes")

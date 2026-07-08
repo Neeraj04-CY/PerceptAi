@@ -14,6 +14,7 @@ import {
   KeyRound,
   BarChart3,
   Building2,
+  Server,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
@@ -25,6 +26,7 @@ const nav = [
   { label: "Missions", href: "/dashboard/missions", icon: Network, testid: "nav-missions", enabled: true },
   { label: "Studio", href: "/dashboard/studio", icon: PenTool, testid: "nav-studio", enabled: true },
   { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
+  { label: "Runners", href: "/dashboard/runners", icon: Server, testid: "nav-runners", enabled: true },
   { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3, testid: "nav-analytics", enabled: true },
   { label: "Organization", href: "/dashboard/org", icon: Building2, testid: "nav-org", enabled: true },

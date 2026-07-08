@@ -14,6 +14,7 @@ from models import ExecuteRequest
 from routes.analytics_routes import router as analytics_router
 from routes.approval_routes import router as approval_router
 from routes.control_routes import router as control_router
+from routes.runner_routes import router as runner_router
 from routes.auth_routes import router as auth_router
 from routes.dashboard_routes import router as dashboard_router
 from routes.execute_routes import router as execute_router
@@ -58,6 +59,7 @@ app.include_router(approval_router, prefix="/api/v1")
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(control_router, prefix="/api/v1")
+app.include_router(runner_router, prefix="/api/v1")
 
 
 @app.on_event("startup")

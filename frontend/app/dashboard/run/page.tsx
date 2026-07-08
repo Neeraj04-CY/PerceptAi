@@ -22,7 +22,8 @@ import {
   type CockpitState,
 } from "@/components/dashboard/run/execution-cockpit";
 import { type TimelineStep, type LogLine } from "@/components/dashboard/run/mock-data";
-import { streamPost } from "@/lib/stream";
+import { streamPost, streamGet } from "@/lib/stream";
+import { dispatchRemoteRun } from "@/lib/api";
 import { sendControl, decideApproval, type ControlAction, type ApprovalDecision } from "@/lib/control";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,7 @@ type RunMode = "task" | "mission";
 
 export default function RunTaskPage() {
   const [mode, setMode] = useState<RunMode>("task");
+  const [target, setTarget] = useState<"local" | "runner">("local");
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -141,16 +143,10 @@ export default function RunTaskPage() {
     }
   }, [prepareRun]);
 
-  const runTask = useCallback(async (task: string) => {
-    const apiKey = await prepareRun();
-    if (!apiKey) return;
-
-    setLogs([{ ts: formatTime(new Date()), level: "info", msg: "Connecting to PerceptAI runtime..." }]);
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      await streamPost("/execute/stream", { instruction: task }, apiKey, (event: any) => {
+  // One event handler drives the cockpit for BOTH local streaming and the
+  // remote runner relay — the relay translates wire-v1 back to these v0
+  // shapes, so the surface is identical whichever machine executes.
+  const handleTaskEvent = useCallback((event: any) => {
         setCockpit((c) => applyCockpitEvent(c, event));
         switch (event.type) {
           case "session_id":
@@ -291,7 +287,16 @@ export default function RunTaskPage() {
             setMeta((m) => ({ ...m, status: "failed" }));
             break;
         }
-      }, controller.signal);
+  }, []);
+
+  const runTask = useCallback(async (task: string) => {
+    const apiKey = await prepareRun();
+    if (!apiKey) return;
+    setLogs([{ ts: formatTime(new Date()), level: "info", msg: "Connecting to PerceptAI runtime..." }]);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await streamPost("/execute/stream", { instruction: task }, apiKey, handleTaskEvent, controller.signal);
       setRunning(false);
     } catch (err) {
       setRunning(false);
@@ -300,12 +305,44 @@ export default function RunTaskPage() {
       }]);
       setMeta((m) => ({ ...m, status: "failed" }));
     }
-  }, [prepareRun]);
+  }, [prepareRun, handleTaskEvent]);
+
+  // Route-to-runner: dispatch to the fleet, then drive the SAME cockpit off
+  // the live relay. Control (pause/resume/stop/approval) still flows through
+  // the cockpit's control bar — the plane routes it to the durable store.
+  const runRemote = useCallback(async (instruction: string) => {
+    const apiKey = await prepareRun();
+    if (!apiKey) return;
+    const token = getToken();
+    if (!token) { setRunning(false); return; }
+    setMeta((m) => ({ ...m, plan: "remote runner", region: "runner fleet" }));
+    setLogs([{ ts: formatTime(new Date()), level: "info", msg: "Dispatching to the runner fleet…" }]);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      const { session_id } = await dispatchRemoteRun(instruction);
+      sessionIdRef.current = session_id;
+      setMeta((m) => ({ ...m, id: session_id }));
+      setLogs((prev) => [...prev, {
+        ts: formatTime(new Date()), level: "info",
+        msg: "Queued — waiting for a runner to claim the work…",
+      }]);
+      await streamGet(`/executions/${session_id}/stream`, token, handleTaskEvent, controller.signal);
+      setRunning(false);
+    } catch (err) {
+      setRunning(false);
+      setLogs((prev) => [...prev, {
+        ts: "—", level: "err", msg: err instanceof Error ? err.message : "Dispatch failed",
+      }]);
+      setMeta((m) => ({ ...m, status: "failed" }));
+    }
+  }, [prepareRun, handleTaskEvent]);
 
   const handleRun = useCallback((instruction: string) => {
     if (mode === "mission") void runMission(instruction);
+    else if (target === "runner") void runRemote(instruction);
     else void runTask(instruction);
-  }, [mode, runMission, runTask]);
+  }, [mode, target, runMission, runTask, runRemote]);
 
   const handleStop = () => {
     abortRef.current?.abort();
@@ -410,6 +447,36 @@ export default function RunTaskPage() {
               : "executive + specialists, evidence graph, grounded report"}
           </span>
         </div>
+
+        {/* target: run on this machine, or dispatch to a runner in the fleet */}
+        {mode === "task" && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-white/[0.07] bg-white/[0.02] p-1 w-fit"
+                 role="tablist" aria-label="Execution target">
+              {([["local", "This machine"], ["runner", "A runner"]] as const).map(([t, label]) => (
+                <button
+                  key={t}
+                  role="tab"
+                  aria-selected={target === t}
+                  disabled={running}
+                  onClick={() => setTarget(t)}
+                  className={cn(
+                    "rounded-md px-3 h-7 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
+                    target === t ? "bg-accent/15 text-accent" : "text-white/45 hover:text-white",
+                    running && "opacity-50 cursor-not-allowed",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="px-1 text-[11px] text-white/30 hidden sm:inline">
+              {target === "local"
+                ? "executes on the API host"
+                : "dispatched to the fleet — same live cockpit"}
+            </span>
+          </div>
+        )}
         <TaskInput running={running} onRun={handleRun} onStop={handleStop}
                    apiKeyValue={meta.apiKey} initialTask={initialTask} />
       </motion.div>

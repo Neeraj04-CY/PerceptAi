@@ -52,3 +52,45 @@ class EventBuffer:
             return True
         except Exception:
             return False
+
+
+def current_max_seq(db, owner_kind: str, owner_id: str) -> int:
+    """Highest persisted seq for an execution, or 0. Lets a reconnecting
+    runner resume streaming from where the plane left off."""
+    try:
+        rows = db.table("events").select("seq").eq("owner_kind", owner_kind).eq(
+            "owner_id", owner_id).order("seq", desc=True).limit(1).execute().data or []
+        return int(rows[0]["seq"]) if rows else 0
+    except Exception:
+        return 0
+
+
+def ingest_events(db, owner_kind: str, owner_id: str,
+                  events: list[dict[str, Any]]) -> int:
+    """Idempotently persist wire-v1 events from a runner. Only rows with a
+    seq greater than what is already stored are inserted, so a retried or
+    reconnecting runner never creates duplicates — the plane's stored stream
+    is the source of truth. Returns the new max seq (the resume point)."""
+    stored = current_max_seq(db, owner_kind, owner_id)
+    fresh = [e for e in events if int(e.get("seq", 0) or 0) > stored]
+    if not fresh:
+        return stored
+    rows = [
+        {
+            "owner_kind": owner_kind,
+            "owner_id": owner_id,
+            "seq": int(e.get("seq", 0) or 0),
+            "type": str(e.get("type", "")),
+            "task_id": str(e.get("task_id", "")),
+            "ts": e.get("timestamp") or e.get("ts"),
+            "payload": e.get("payload") or e.get("data") or {},
+        }
+        for e in fresh
+    ]
+    rows.sort(key=lambda r: r["seq"])
+    try:
+        for start in range(0, len(rows), CHUNK):
+            db.table("events").insert(rows[start:start + CHUNK]).execute()
+        return rows[-1]["seq"]
+    except Exception:
+        return stored

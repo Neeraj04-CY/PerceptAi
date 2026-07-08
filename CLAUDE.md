@@ -38,6 +38,11 @@ pip install -r api/requirements.txt
 uvicorn main:app --reload --port 8000         # run from inside api/ — imports are cwd-relative
 # DB schema: run api/database.sql then api/migrations/*.sql in order (Supabase SQL editor)
 
+# Runner (repo root) — executes dispatched work on THIS machine's real screen.
+# Credentials come from registering a runner in the dashboard (/dashboard/runners).
+# RUNNER_PLANE_URL=<api>/api/v1  RUNNER_TOKEN=rk_...  RUNNER_SIGNING_KEY=...
+python -m runner                              # pulls signed work, controls the real screen
+
 # Frontend (from frontend/)
 npm install
 npm run dev      # Next.js dev server on :3000 ("start" also runs dev; "serve" is prod)
@@ -88,7 +93,20 @@ Platform invariants (Chapter Ω):
 - **Secrets** (`secrets_crypto.py`): Fernet, key injected from `SECRETS_KEY`; values are write-only — never returned by the API and never fed into LLM-visible instructions.
 - **Scheduler** (`scheduler.py`): schedules are data on the workflow row; the loop is opt-in (`ENABLE_SCHEDULER`, default off — it drives THIS host's desktop) and task-mode only.
 
-**Execution happens on the machine hosting the API.** Cloud deploys have no desktop; real automation requires running the API on a local Windows machine. The long-term design is control-plane + local runners — keep new interfaces compatible with remote, asynchronous execution.
+**Execution happens on the machine hosting the API OR on a registered runner.** Cloud deploys have no desktop; real automation runs either on a local Windows API host or on a runner (see below). The design is control-plane + local runners — keep new interfaces compatible with remote, asynchronous execution.
+
+### Distributed execution: the runner (Sprint 4)
+
+The control plane (api/) dispatches SIGNED work to thin runners that execute through the ONE runtime and stream canonical events back. The engine never changes and stays transport-unaware; the runner is a layer ABOVE it (`runner/`, sibling to `perceptai/` and `api/` — the kernel never imports it), exactly like `workforce/`.
+
+- **`runner/` is intentionally thin**: register (out-of-band) → long-poll `claim` → verify the signed order → run ONE `AgentSession` (no forked logic) → forward wire-v1 events → heartbeat → reconnect. `worker.py` is the loop; `client.py` the HTTP transport (pull-only — outbound requests, no inbound ports, NAT-friendly, scales to thousands); `control.py` the `RemoteControlChannel`; the client + session factory + control factory are injected so the whole loop runs against a fake transport and the simulated runtime in tests.
+- **Work is the queue, reusing `sessions`**: a remotely dispatched session is `status='queued'`; `claim_next_session` (SKIP LOCKED RPC in `003_runners.sql`) hands exactly one to a runner (`claimed`→`running`) under a heartbeat-renewed lease; a dead runner's lease is reclaimed to the queue (`reclaim_expired_sessions`). Local (API-host) execution never sets the runner columns and never uses those statuses — remote is purely additive.
+- **Signed work orders** (`runner_signing.py`, pure): HMAC over the canonical order with a per-runner key derived from `RUNNER_SIGNING_KEY` + runner id (server derives on demand, runner is issued its key once at registration). Secrets are NOT in task work orders (mission fast-follow). Asymmetric per-runner keypairs are the documented hardening step — they change only that module.
+- **Control is the Sprint 3 ControlChannel, over the network**: `RemoteControlChannel` reads durable control (`execution_control` table) via long-poll; the operator's pause/resume/stop/approval land there (the same control endpoints route to the in-process registry for local runs, the durable store for remote — one control API, transparent). This is the restart-surviving version of the in-process channel; the engine is unchanged.
+- **Live relay** (`relay.py`, in-process pub/sub): the runner's event ingest persists (idempotent on `seq`, so reconnects never duplicate) AND fans out to any dashboard SSE viewer of `GET /executions/{id}/stream` (JWT). The viewer backfills the persisted stream first (nothing lost mid-connect), then streams live; events are translated wire-v1→v0 (`streaming.platform_to_legacy`) so the SAME cockpit renders local and remote runs identically. Single-process like `control_registry`; a multi-worker deploy swaps `relay.py` for Redis pub/sub without touching endpoints.
+- **Frontend**: `/dashboard/runners` is the fleet (status/capabilities/last-seen + one-time credential + setup snippet on register); the Run page's task target toggles `This machine | A runner` (`dispatchRemoteRun` → `streamGet` the relay → the same cockpit; control still flows through the cockpit's bar to the durable store).
+
+**Crash/restart:** an in-process (local) paused run does not survive an API restart (documented in `control_registry.py`); a remote run's control is durable, and a dead runner's lease is reclaimed to the queue — honest recovery, never a silently stuck run.
 
 ### Evaluation (evals/)
 

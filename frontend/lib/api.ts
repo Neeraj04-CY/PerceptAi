@@ -720,3 +720,29 @@ export const getPlatformHealth = (signal?: AbortSignal) => {
       return r.json() as Promise<PlatformHealth>;
     });
 };
+
+// Runners (distributed execution)
+export interface ApiRunner {
+  id: string;
+  name: string;
+  token_prefix: string;
+  workspace_id: string | null;
+  capabilities: Record<string, unknown>;
+  current_session_id: string | null;
+  last_heartbeat_at: string | null;
+  status: "online" | "offline" | "busy";
+  created_at: string;
+}
+
+export interface NewRunner {
+  runner: ApiRunner;
+  token: string;        // shown once
+  signing_key: string;  // shown once
+}
+
+export const getRunners = (signal?: AbortSignal) =>
+  getJsonAuth<ApiRunner[]>("/runners", signal);
+export const registerRunner = (name: string) =>
+  sendJsonAuth<NewRunner>("POST", "/runners", { name });
+export const dispatchRemoteRun = (instruction: string) =>
+  sendJsonAuth<{ session_id: string; status: string }>("POST", "/runners/dispatch", { instruction });

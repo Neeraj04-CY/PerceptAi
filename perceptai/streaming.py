@@ -157,6 +157,21 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
     return None
 
 
+def platform_to_legacy(type_: str, payload: dict, task_id: str = "",
+                       timestamp: str = "", seq: int = 0) -> Optional[dict]:
+    """Translate a persisted/relayed wire-v1 event back into the dashboard's
+    v0 schema. Lets a REMOTE runner's stream (which travels as wire-v1) drive
+    the exact same cockpit as a local run, with zero cockpit changes. Unknown
+    types (or those with no legacy form) return None."""
+    try:
+        etype = EventType(type_)
+    except ValueError:
+        return None
+    event = TaskEvent(type=etype, session_id="", task_id=task_id, seq=seq,
+                      timestamp=timestamp or "", payload=payload or {})
+    return to_legacy_sse(event)
+
+
 def to_platform_sse(event: TaskEvent) -> dict:
     """Wire format v1: the full-fidelity serialization for platform
     consumers (mission streams, event replay). Every canonical event is
