@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .config import EngineConfig
-from .contracts import BoundingBox, Observation, SourceType
+from .contracts import INTERACTIVE_ROLES, BoundingBox, Observation, SourceType
 from .llm import LLMClient
 
 # Providers by cost tier. "free"/"cheap" run on every snapshot; "expensive"
@@ -355,6 +355,103 @@ class UiaProvider(PerceptionProvider):
             return None  # one broken COM node never kills the walk
 
 
+# ------------------------------------------------------------------ dom
+
+# Accessibility (ARIA) role -> world-model role. The AX tree gives clean
+# semantics; this normalizes them into the same vocabulary UIA/OCR use so
+# fusion can merge across sources.
+_AX_ROLE_MAP = {
+    "button": "button", "link": "link", "textbox": "edit", "searchbox": "edit",
+    "textfield": "edit", "combobox": "combo_box", "listbox": "combo_box",
+    "checkbox": "check_box", "switch": "check_box", "radio": "radio_button",
+    "menuitem": "menu_item", "menuitemcheckbox": "menu_item",
+    "menuitemradio": "menu_item", "menu": "menu", "menubar": "menu",
+    "tab": "tab", "option": "list_item", "listitem": "list_item",
+    "treeitem": "tree_item", "slider": "slider", "spinbutton": "spinner",
+    "heading": "text", "img": "image", "image": "image", "text": "text",
+    "columnheader": "header", "rowheader": "header",
+}
+# Roles worth reporting even when they carry no accessible name (icon buttons).
+_AX_KEEP_UNNAMED = frozenset({
+    "button", "link", "edit", "combo_box", "check_box", "radio_button",
+    "menu_item", "tab", "slider", "spinner",
+})
+
+
+class DomProvider(PerceptionProvider):
+    """Structural perception of the foreground Chromium tab via the Chrome
+    DevTools Protocol accessibility tree. The highest-fidelity source on the
+    web — real roles, names and rectangles from the page itself.
+
+    Pixels stay the floor: when no debuggable browser is reachable the reader
+    returns None and this provider contributes nothing. The reader (cdp.py)
+    owns the CDP wire and the screen-coordinate mapping; everything here is a
+    pure role map and a translate, so it unit-tests against a fake reader."""
+
+    name = "dom"
+    source = SourceType.DOM
+    cost = COST_CHEAP
+
+    def __init__(self, config: EngineConfig, windows, reader=None):
+        self._config = config
+        self._windows = windows
+        self._reader = reader  # injected DomReader; built lazily by default
+
+    def available(self) -> bool:
+        return bool(self._config.dom_enabled)
+
+    def _get_reader(self):
+        if self._reader is None:
+            from .cdp import CDPAccessibilityReader
+            self._reader = CDPAccessibilityReader()
+        return self._reader
+
+    def observe(self, frame: FrameContext) -> list[Observation]:
+        snapshot = self._get_reader().read(
+            self._config.dom_host, self._config.dom_debug_port,
+            self._foreground_title(),
+            max_nodes=self._config.dom_max_elements,
+            timeout_s=self._config.dom_time_budget_s,
+        )
+        if snapshot is None:
+            return []
+        ox, oy = snapshot.origin
+        window = snapshot.title
+        observations: list[Observation] = []
+        for node in snapshot.nodes:
+            role = _AX_ROLE_MAP.get(node.role, node.role or "unknown")
+            name = node.name or node.value
+            interactive = role in INTERACTIVE_ROLES or node.focusable
+            if not name and role not in _AX_KEEP_UNNAMED and not interactive:
+                continue  # unnamed non-interactive node — noise
+            left, top = int(ox + node.x), int(oy + node.y)
+            bbox = BoundingBox(left, top, left + int(node.w), top + int(node.h))
+            if not bbox.valid:
+                continue
+            observations.append(Observation(
+                source=self.source, role=role, text=name, bbox=bbox,
+                confidence=1.0, window=window,
+                attributes={
+                    "interactive": interactive,
+                    "enabled": not node.disabled,
+                    "ax_role": node.role,
+                    "value": node.value,
+                },
+            ))
+        return observations
+
+    def _foreground_title(self) -> str:
+        """Best-effort foreground window title, so the reader attaches to the
+        right tab. Empty is fine — the reader then picks the first page."""
+        getter = getattr(self._windows, "foreground_title", None)
+        if callable(getter):
+            try:
+                return str(getter() or "")
+            except Exception:
+                return ""
+        return ""
+
+
 # ------------------------------------------------------------------ vision
 
 class VisionProvider(PerceptionProvider):
@@ -436,6 +533,7 @@ def default_providers(
     providers: list[PerceptionProvider] = [
         WindowMetadataProvider(windows),
         UiaProvider(config),
+        DomProvider(config, windows),
         OcrProvider(config, perception),
     ]
     if llm is not None:

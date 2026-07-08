@@ -10,11 +10,16 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import time
+from pathlib import Path
 from typing import Optional
 
 from .config import EngineConfig
 from .contracts import ActionOutcome
+
+# Chromium-family browsers the DOM provider can attach to over CDP.
+_CHROMIUM_NAMES = ("chrome", "msedge", "edge", "chromium", "brave")
 
 # OS shell windows that are always present and never task-relevant.
 SHELL_WINDOW_TITLES = (
@@ -207,6 +212,16 @@ class AppLauncher:
 
     def navigate(self, url: str) -> ActionOutcome:
         try:
+            # Prefer a debuggable Chromium so the DOM provider can attach —
+            # structural web perception "just works" without operator setup.
+            if self._config.browser_debug_launch and self._config.dom_enabled:
+                exe = self._resolve_chromium()
+                if exe:
+                    subprocess.Popen(self._chromium_debug_command(exe, url))
+                    time.sleep(2)
+                    return ActionOutcome(ok=True, data={
+                        "url": url, "browser": exe, "debuggable": True})
+
             browser = self._config.preferred_browser
             if browser:
                 exe = self.resolve(browser)
@@ -220,3 +235,28 @@ class AppLauncher:
             return ActionOutcome(ok=True, data={"url": url, "browser": "default"})
         except Exception as e:
             return ActionOutcome(ok=False, error=str(e))
+
+    def _resolve_chromium(self) -> Optional[str]:
+        """Find a Chromium-family browser, honoring preferred_browser first."""
+        pref = (self._config.preferred_browser or "").strip().lower()
+        candidates = ([pref] if pref else []) + list(_CHROMIUM_NAMES)
+        for name in candidates:
+            if name and any(c in name for c in _CHROMIUM_NAMES):
+                exe = self.resolve(name)
+                if exe:
+                    return exe
+        return None
+
+    def _chromium_debug_command(self, exe: str, url: str) -> list[str]:
+        """The launch command that opens the CDP port. A dedicated profile is
+        required — without it a new launch just forwards the URL to an already
+        running browser and the debug port never opens. Pure/testable."""
+        profile = str(Path(tempfile.gettempdir()) / "perceptai-cdp-profile")
+        return [
+            exe,
+            f"--remote-debugging-port={self._config.dom_debug_port}",
+            f"--user-data-dir={profile}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            url,
+        ]

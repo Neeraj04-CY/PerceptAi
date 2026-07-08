@@ -8,4 +8,5 @@ python-dotenv
 requests
 numpy
 psutil
+websocket-client
 uiautomation; sys_platform == "win32"

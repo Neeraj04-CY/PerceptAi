@@ -67,6 +67,18 @@ class EngineConfig:
     uia_max_elements: int = 120       # cap on UIA tree nodes per snapshot
     uia_max_depth: int = 12
     uia_time_budget_s: float = 1.5    # hard wall-clock budget for the tree walk
+
+    # Browser/DOM provider (Sprint 6) — structural fidelity on the web via the
+    # Chrome DevTools Protocol. Pixels stay the floor: when no debuggable
+    # Chromium is present the provider contributes nothing and OCR/UIA carry.
+    dom_enabled: bool = True
+    dom_host: str = "127.0.0.1"
+    dom_debug_port: int = 9222        # CDP endpoint the provider attaches to
+    dom_max_elements: int = 150       # cap on AX nodes emitted per snapshot
+    dom_time_budget_s: float = 1.5    # hard wall-clock budget for a CDP read
+    # When the engine launches a browser, start it debuggable so the DOM
+    # provider can attach. Real-screen behavior — validated by perception_bench.
+    browser_debug_launch: bool = True
     # Base trust per observation source; observation confidence is
     # provider-native score × source trust. Confidence is never faked:
     # a source that guesses (vision) can never outrank one that knows (uia).

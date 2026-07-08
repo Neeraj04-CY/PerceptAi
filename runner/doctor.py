@@ -84,6 +84,7 @@ _ENGINE_DEPS = [
     ("numpy", FAIL, "perception math", "pip install -r requirements.txt"),
     ("groq", FAIL, "LLM planning", "pip install -r requirements.txt"),
     ("easyocr", WARN, "OCR perception (UIA/vision still work without it)", "pip install -r requirements.txt"),
+    ("websocket", WARN, "DOM/browser perception (falls back to pixels without it)", "pip install websocket-client"),
 ]
 
 

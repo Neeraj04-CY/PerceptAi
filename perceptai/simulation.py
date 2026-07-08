@@ -210,6 +210,7 @@ def fast_config(**overrides) -> EngineConfig:
         settle_after_recovery_s=0.0,
         fast_cache_ttl_s=0.0,
         uia_enabled=False,
+        dom_enabled=False,   # never attach to a real browser during simulation
     )
     defaults.update(overrides)
     return EngineConfig(**defaults)
