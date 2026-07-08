@@ -117,6 +117,29 @@ def test_new_runner_token_shape():
     assert prefix == token[:12] and len(prefix) == 12
 
 
+def test_reclaim_never_started_run_is_requeued():
+    d = svc.reclaim_decision("claimed", attempts=1, max_attempts=3)
+    assert d["status"] == "queued" and d["runner_id"] is None
+    assert "error" not in d  # nothing failed — it just goes back to the queue
+
+
+def test_reclaim_running_run_is_dead_lettered_not_retried():
+    d = svc.reclaim_decision("running", attempts=1, max_attempts=3)
+    assert d["status"] == "failed"
+    assert "duplicate" in d["error"]  # never silently re-run a mid-flight real-screen task
+
+
+def test_reclaim_bounds_retries_with_dead_letter():
+    # attempts == max -> stop requeueing even a never-started run
+    d = svc.reclaim_decision("claimed", attempts=3, max_attempts=3)
+    assert d["status"] == "failed" and "repeated attempts" in d["error"]
+
+
+def test_reclaim_ignores_non_stale_statuses():
+    assert svc.reclaim_decision("completed", 1, 3) is None
+    assert svc.reclaim_decision("queued", 0, 3) is None
+
+
 def test_public_runner_never_leaks_token_hash():
     row = {"id": "r1", "name": "desk-01", "token_hash": "SECRET_HASH",
            "token_prefix": "rk_abc", "last_heartbeat_at": (NOW).isoformat(),

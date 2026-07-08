@@ -77,6 +77,7 @@ def test_task_completed_maps_to_complete():
             status="completed", duration_s=9.5, total_steps=4,
             verification={"verified": True},
             summary="done well", report={"executive_summary": "done well"},
+            failure_type=None,
         )
     )
     assert sse == {
@@ -87,6 +88,7 @@ def test_task_completed_maps_to_complete():
         "verification": {"verified": True},
         "summary": "done well",
         "report": {"executive_summary": "done well"},
+        "failure_type": None,
     }
 
 

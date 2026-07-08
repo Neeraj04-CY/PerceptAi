@@ -31,6 +31,11 @@ class HttpControlPlane:
     def _url(self, path: str) -> str:
         return f"{self._c.plane_url}{path}"
 
+    def ping(self) -> None:
+        """Unauthenticated reachability probe for the doctor."""
+        self._s.get(self._url("/platform/health"),
+                    timeout=self._c.request_timeout_s).raise_for_status()
+
     def heartbeat(self, current_session_id: Optional[str]) -> None:
         self._s.post(self._url("/runners/heartbeat"),
                      json={"current_session_id": current_session_id},

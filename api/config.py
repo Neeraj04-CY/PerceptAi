@@ -23,8 +23,11 @@ class Config:
     RUNNER_SIGNING_KEY = os.getenv("RUNNER_SIGNING_KEY") or os.getenv("SECRETS_KEY") \
         or os.getenv("JWT_SECRET", "change-this-secret")
     # Lease a runner holds on a claimed session; renewed by heartbeat. A run
-    # whose runner stops heartbeating past this is reclaimed to the queue.
+    # whose runner stops heartbeating past this is reclaimed (see runners.py).
     RUNNER_LEASE_SECONDS = int(os.getenv("RUNNER_LEASE_SECONDS", "90"))
+    # Max times a session may be claimed before it is dead-lettered instead of
+    # requeued — bounds retries so a run never bounces between broken runners.
+    RUNNER_MAX_ATTEMPTS = int(os.getenv("RUNNER_MAX_ATTEMPTS", "3"))
     # Scheduled workflows execute on THIS host's desktop. Off by default;
     # enable only on a machine dedicated to running automations.
     ENABLE_SCHEDULER = os.getenv("ENABLE_SCHEDULER", "false").lower() in ("1", "true", "yes")

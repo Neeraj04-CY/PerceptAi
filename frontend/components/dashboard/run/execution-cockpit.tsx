@@ -15,8 +15,10 @@ import {
   FileText,
   ArrowRight,
 } from "lucide-react";
+import { Lightbulb } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { remediationFor } from "@/lib/remediation";
 import type { ApprovalDecision, ControlAction } from "@/lib/control";
 
 /**
@@ -59,6 +61,7 @@ export type CockpitControl =
 export interface CockpitState {
   control: CockpitControl;
   finalStatus?: "completed" | "failed";
+  failureType?: string | null;
   phase: string;
   nowTitle: string;
   nowAction: string;
@@ -178,6 +181,7 @@ export function applyCockpitEvent(
         ...s,
         control: "done",
         finalStatus: status === "completed" ? "completed" : "failed",
+        failureType: (e.failure_type as string | null) ?? null,
         phase: status === "completed" ? "Goal achieved" : "Run ended",
         pending: null,
         waitingReason: "",
@@ -395,6 +399,28 @@ export function ExecutionCockpit({ state, running, onControl, onApproval }: Cock
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Failure remediation: when a run ends failed, say exactly what to do next */}
+      {state.control === "done" && state.finalStatus === "failed" && (
+        <div className="border-b border-white/[0.07] bg-white/[0.015] px-4 py-3.5">
+          <div className="flex items-start gap-2.5">
+            <Lightbulb size={15} className="text-amber-300 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[13.5px] text-white/90">{remediationFor(state.failureType).title}</span>
+                {state.failureType && (
+                  <span className="font-mono text-[9px] uppercase tracking-[0.12em] rounded px-1.5 py-0.5 border border-white/10 text-white/40">
+                    {state.failureType.replace(/_/g, " ")}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-[12px] leading-relaxed text-white/55">
+                {remediationFor(state.failureType).hint}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Now / Next / Waiting — the three questions, side by side */}
       <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr] divide-y md:divide-y-0 md:divide-x divide-white/[0.06]">

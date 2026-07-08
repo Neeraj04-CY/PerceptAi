@@ -35,8 +35,11 @@ CREATE INDEX runners_org ON runners (org_id, status, last_heartbeat_at DESC);
 -- never uses the 'queued'/'claimed' statuses. Remote is purely additive.
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS runner_id UUID REFERENCES runners(id) ON DELETE SET NULL;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attempts INT DEFAULT 0;  -- claim count, bounds retries
 CREATE INDEX IF NOT EXISTS sessions_queue ON sessions (org_id, status, created_at)
   WHERE status = 'queued';
+CREATE INDEX IF NOT EXISTS sessions_lease ON sessions (status, claim_expires_at)
+  WHERE status IN ('claimed', 'running');
 
 -- ---------------------------------------------- atomic claim (race-safe)
 -- Thousands of runners long-poll concurrently; two must never claim the same
@@ -51,7 +54,8 @@ CREATE OR REPLACE FUNCTION claim_next_session(
   UPDATE sessions s
   SET status = 'claimed',
       runner_id = p_runner_id,
-      claim_expires_at = NOW() + make_interval(secs => p_lease_seconds)
+      claim_expires_at = NOW() + make_interval(secs => p_lease_seconds),
+      attempts = attempts + 1          -- each claim counts, so retries are bounded
   WHERE s.id = (
     SELECT id FROM sessions
     WHERE status = 'queued'
@@ -64,18 +68,11 @@ CREATE OR REPLACE FUNCTION claim_next_session(
   RETURNING s.*;
 $$ LANGUAGE sql;
 
--- ----------------------------------------- reclaim expired leases (dead runners)
--- A runner that dies mid-run stops renewing its lease. This returns its
--- session to the queue so another runner can pick it up — honest recovery,
--- never a silently stuck run. Callable on a cadence by the control plane.
-CREATE OR REPLACE FUNCTION reclaim_expired_sessions() RETURNS SETOF sessions AS $$
-  UPDATE sessions s
-  SET status = 'queued', runner_id = NULL, claim_expires_at = NULL
-  WHERE s.status IN ('claimed', 'running')
-    AND s.claim_expires_at IS NOT NULL
-    AND s.claim_expires_at < NOW()
-  RETURNING s.*;
-$$ LANGUAGE sql;
+-- Reclaiming expired leases is done in Python (runners.reclaim_stale) so the
+-- decision logic (safe requeue vs honest dead-letter) has ONE tested source of
+-- truth. A never-started 'claimed' run is safely requeued; a 'running' run is
+-- dead-lettered rather than re-executed, because a real-screen task is not
+-- idempotent and must never be silently run twice.
 
 -- ------------------------------------------------- durable execution control
 -- The restart-surviving version of Sprint 3's in-process control channel.

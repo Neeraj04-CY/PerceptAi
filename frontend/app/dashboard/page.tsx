@@ -13,9 +13,8 @@ import {
   ArrowRight,
   CheckCircle2,
   FileText,
-  Network,
-  PenTool,
   PlayCircle,
+  Server,
   ShieldCheck,
   Users,
   XCircle,
@@ -443,41 +442,85 @@ function SpecialistPanel({ capabilities }: { capabilities: ApiCapabilities | nul
 
 /* ------------------------------------------------------------ first run */
 
+// The one benign, self-verifying task that proves the whole loop safely.
+const STARTER_TASK = "Open Notepad and type 'Hello from PerceptAI'";
+
 function FirstRun({ templates }: { templates: ApiTemplate[] }) {
-  const steps = [
-    { icon: PlayCircle, title: "Run your first task",
-      body: "Plain English in — the agent perceives the screen, plans, acts and verifies.",
-      href: "/dashboard/run", cta: "Open Run" },
-    { icon: Network, title: "Launch a mission",
-      body: "An executive decomposes the goal across specialists and returns one grounded report.",
-      href: "/dashboard/run", cta: "Run as mission" },
-    { icon: PenTool, title: "Save it as a workflow",
-      body: "Parametrize with variables, publish a version, schedule it.",
-      href: "/dashboard/studio", cta: "Open Studio" },
-  ];
+  const router = useRouter();
+
+  const runStarter = (target: "local" | "runner") => {
+    try {
+      window.localStorage.setItem("perceptai_pending_run",
+        JSON.stringify({ instruction: STARTER_TASK, mode: "task", target }));
+    } catch {
+      /* ignore */
+    }
+    router.push("/dashboard/run");
+  };
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4 }} className="space-y-4">
       <div className="glass-strong rounded-xl p-6">
-        <h2 className="text-[15px] font-medium text-white">Welcome to PerceptAI</h2>
-        <p className="mt-1 text-[13px] text-white/50 max-w-xl">
-          An AI workforce that works your real screen: perception in, verified
-          business outcomes out. Three steps to your first report:
+        <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-accent/80">get started</span>
+        <h2 className="mt-2 text-[19px] font-semibold tracking-tight text-white">
+          Reach your first successful run
+        </h2>
+        <p className="mt-1.5 text-[13px] text-white/55 max-w-xl leading-relaxed">
+          Describe a goal in plain English — PerceptAI perceives the screen, plans, acts, and
+          <span className="text-white/75"> verifies the outcome</span>. Start with one safe task and watch the
+          whole loop in the live cockpit.
         </p>
-        <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
-          {steps.map((step, i) => (
-            <Link key={step.title} href={step.href}
-                  className="group rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 hover:border-accent/30 transition-colors">
-              <div className="flex items-center gap-2 text-white/40">
-                <step.icon size={15} strokeWidth={1.6} />
-                <span className="font-mono text-[9px] uppercase tracking-[0.18em]">Step {i + 1}</span>
+
+        {/* The one-click path to first success */}
+        <div className="mt-5 rounded-lg border border-accent/20 bg-accent/[0.04] p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[13px] text-white/85">
+                <PlayCircle size={15} className="text-accent shrink-0" />
+                Run a safe starter task
               </div>
-              <div className="mt-2 text-[13px] text-white/85">{step.title}</div>
-              <p className="mt-1 text-[11px] leading-relaxed text-white/40">{step.body}</p>
-              <span className="mt-3 inline-flex items-center gap-1 text-[11px] text-accent opacity-70 group-hover:opacity-100">
-                {step.cta} <ArrowRight size={11} />
-              </span>
-            </Link>
+              <p className="mt-1 text-[12px] text-white/50 leading-relaxed">
+                Opens Notepad, types one line, and verifies it — harmless, about 15 seconds. Runs on
+                this machine and takes the screen briefly; you approve the run on the next screen.
+              </p>
+            </div>
+            <button
+              onClick={() => runStarter("local")}
+              data-testid="run-starter-task"
+              className="shrink-0 inline-flex items-center gap-2 rounded-lg bg-accent text-black px-4 h-10 text-[13px] font-medium hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.6)] transition-shadow"
+            >
+              Run starter task <ArrowRight size={14} />
+            </button>
+          </div>
+        </div>
+
+        {/* Alternative: run it on a runner instead of this machine */}
+        <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2 text-[12px] text-white/45">
+          <span>Prefer to run it elsewhere?</span>
+          <Link href="/dashboard/runners" className="inline-flex items-center gap-1 text-accent/80 hover:text-accent">
+            <Server size={12} /> Connect a runner
+          </Link>
+          <span className="hidden sm:inline text-white/25">·</span>
+          <button onClick={() => runStarter("runner")} className="text-white/55 hover:text-white text-left">
+            then run the starter on it <ArrowRight size={11} className="inline" />
+          </button>
+        </div>
+
+        {/* What to expect — sets the trust frame without being a wall of steps */}
+        <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/[0.06] pt-4">
+          {[
+            { n: "1", t: "Describe", b: "Plain English goal" },
+            { n: "2", t: "Watch it work", b: "Live cockpit: now, why, next" },
+            { n: "3", t: "Verified result", b: "Outcome checked, not assumed" },
+          ].map((s) => (
+            <div key={s.n} className="min-w-0">
+              <div className="flex items-center gap-1.5 text-white/40">
+                <span className="font-mono text-[9px] uppercase tracking-[0.16em]">{s.n}</span>
+                <span className="text-[12px] text-white/80 truncate">{s.t}</span>
+              </div>
+              <p className="mt-0.5 text-[11px] leading-snug text-white/40">{s.b}</p>
+            </div>
           ))}
         </div>
       </div>

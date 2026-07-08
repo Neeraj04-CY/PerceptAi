@@ -64,9 +64,10 @@ export default function RunTaskPage() {
     if (!raw) return;
     window.localStorage.removeItem("perceptai_pending_run");
     try {
-      const pending = JSON.parse(raw) as { instruction?: string; mode?: RunMode };
+      const pending = JSON.parse(raw) as { instruction?: string; mode?: RunMode; target?: "local" | "runner" };
       if (pending.instruction) setInitialTask(pending.instruction);
       if (pending.mode === "mission" || pending.mode === "task") setMode(pending.mode);
+      if (pending.target === "runner" || pending.target === "local") setTarget(pending.target);
     } catch {
       // ignore malformed handoff
     }

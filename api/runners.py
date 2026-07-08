@@ -183,6 +183,50 @@ def record_heartbeat(db, runner_id: str, *, current_session_id: Optional[str] = 
         _guard(e)
 
 
+def reclaim_decision(status: str, attempts: int, max_attempts: int) -> Optional[dict[str, Any]]:
+    """The safe recovery for a stale (expired-lease) session — ONE tested source
+    of truth. A run that never started is requeued; one that was mid-execution
+    is dead-lettered, because a real-screen task is not idempotent and must
+    never be silently re-run. Returns the fields to set, or None to leave it."""
+    if status == "claimed":
+        # Never started executing (no events yet) — safe to hand to another runner.
+        if attempts >= max_attempts:
+            return {"status": "failed", "runner_id": None, "claim_expires_at": None,
+                    "error": "no runner could start this work after repeated attempts",
+                    "completed_at": _iso(utc_now())}
+        return {"status": "queued", "runner_id": None, "claim_expires_at": None}
+    if status == "running":
+        # Execution had begun — fail honestly rather than risk duplicate actions.
+        return {"status": "failed", "runner_id": None, "claim_expires_at": None,
+                "error": "runner disconnected mid-execution; not auto-retried to avoid duplicate actions",
+                "completed_at": _iso(utc_now())}
+    return None
+
+
+def reclaim_stale(db, max_attempts: Optional[int] = None) -> int:
+    """Requeue/dead-letter sessions whose lease expired (a runner went away).
+    Lazy cleanup — called before a claim, so no background loop is needed.
+    Returns how many were reclaimed. Never raises into the claim path."""
+    max_attempts = config.RUNNER_MAX_ATTEMPTS if max_attempts is None else max_attempts
+    try:
+        rows = db.table("sessions").select("id, status, attempts, claim_expires_at").in_(
+            "status", ["claimed", "running"]).lt(
+            "claim_expires_at", _iso(utc_now())).limit(100).execute().data or []
+    except Exception:
+        return 0
+    reclaimed = 0
+    for row in rows:
+        update = reclaim_decision(row.get("status", ""), int(row.get("attempts", 0) or 0), max_attempts)
+        if not update:
+            continue
+        try:
+            db.table("sessions").update(update).eq("id", row["id"]).execute()
+            reclaimed += 1
+        except Exception:
+            pass
+    return reclaimed
+
+
 def claim_next(db, runner: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Atomically claim the oldest queued session for this runner's org (and
     workspace pin, if any). Returns the claimed session row, or None when the

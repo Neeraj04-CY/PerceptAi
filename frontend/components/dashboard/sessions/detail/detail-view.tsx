@@ -12,8 +12,10 @@ import {
   Copy,
   Check,
   AlertTriangle,
+  Lightbulb,
 } from "lucide-react";
 import { getSession, type ApiSession } from "@/lib/api";
+import { remediationFor } from "@/lib/remediation";
 import { SessionStatusPill } from "@/components/dashboard/sessions/session-status-pill";
 import { MetricCard } from "./metric-card";
 import { PerceptionCard } from "./perception-card";
@@ -205,6 +207,11 @@ function Loaded({
         />
       </div>
 
+      {/* What to do next — surfaced first when the run didn't succeed */}
+      {(session.status === "failed" || session.status === "unverified") && (
+        <RemediationCard failureType={(session.result as { failure_type?: string } | undefined)?.failure_type} />
+      )}
+
       {/* The deliverable — leads everything else */}
       {session.result?.report && <ReportCard report={session.result.report} />}
 
@@ -226,6 +233,36 @@ function Loaded({
 
       {/* Logs */}
       <RuntimeLogs steps={session.steps || []} />
+    </motion.div>
+  );
+}
+
+function RemediationCard({ failureType }: { failureType?: string }) {
+  const r = remediationFor(failureType);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-xl border border-amber-400/20 bg-amber-400/[0.05] p-4"
+      data-testid="remediation-card"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-400/10 text-amber-300 shrink-0">
+          <Lightbulb size={16} />
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[14px] font-medium text-white">{r.title}</span>
+            {failureType && (
+              <span className="font-mono text-[9px] uppercase tracking-[0.12em] rounded px-1.5 py-0.5 border border-white/10 text-white/40">
+                {failureType.replace(/_/g, " ")}
+              </span>
+            )}
+          </div>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/60">{r.hint}</p>
+        </div>
+      </div>
     </motion.div>
   );
 }

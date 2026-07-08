@@ -149,6 +149,7 @@ def to_legacy_sse(event: TaskEvent) -> Optional[dict]:
             "verification": p.get("verification"),
             "summary": p.get("summary", ""),
             "report": p.get("report"),
+            "failure_type": p.get("failure_type"),
         }
 
     if event.type == EventType.ERROR:

@@ -29,7 +29,18 @@ setup(
         "Programming Language :: Python :: 3.13",
         "Topic :: Software Development :: Libraries",
     ],
-    packages=["perceptai"],
+    packages=["perceptai", "runner"],
     install_requires=read_requirements(),
+    extras_require={
+        # The thin runner needs only an HTTP client on top of the engine.
+        "runner": ["requests>=2.28"],
+    },
+    entry_points={
+        "console_scripts": [
+            # `perceptai-runner` — start a runner, or `perceptai-runner --doctor`
+            # to verify the host is ready before any automation runs.
+            "perceptai-runner=runner.__main__:main",
+        ],
+    },
     python_requires=">=3.10",
 )

@@ -204,6 +204,10 @@ def fast_config(**overrides) -> EngineConfig:
         settle_after_launch_s=0.0,
         settle_after_step_s=0.0,
         settle_before_input_s=0.0,
+        settle_before_read_s=0.0,
+        find_retry_wait_s=0.0,
+        recovery_retry_wait_s=0.0,
+        settle_after_recovery_s=0.0,
         fast_cache_ttl_s=0.0,
         uia_enabled=False,
     )

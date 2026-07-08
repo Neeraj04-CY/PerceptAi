@@ -126,6 +126,9 @@ async def claim_work(runner: dict = Depends(get_current_runner)):
     """Long-poll claim: returns a signed work order, or an empty 204 when the
     queue is empty. Atomic — two runners never claim the same session."""
     db = get_service_db()
+    # Lazy recovery: reclaim any sessions whose runner went away, so stale work
+    # re-enters the queue (or dead-letters) before we hand out new work.
+    runner_svc.reclaim_stale(db)
     session = runner_svc.claim_next(db, runner)
     if session is None:
         return Response(status_code=204)

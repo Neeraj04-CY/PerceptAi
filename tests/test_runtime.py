@@ -114,6 +114,31 @@ def test_healing_recovers_failed_step(harness):
     assert result.metadata["healings"] >= 1
 
 
+def test_recovery_settles_before_measuring(harness, monkeypatch):
+    """Sprint 5 reliability fix: after a recovery action the runtime settles
+    (config-driven) before judging whether the failure cleared — so a
+    still-rendering screen never falsely rejects a recovery that worked."""
+    from perceptai.simulation import fast_config
+    import perceptai.runtime as rt
+
+    slept: list = []
+    monkeypatch.setattr(rt.time, "sleep", lambda s: slept.append(s))
+
+    session, fakes, events = harness(
+        plans=[[_step("type", "type into app", text="hello", app="notepad")]],
+        windows=["notepad - window"],
+        healing=[HealingPlan(
+            diagnosis="window lost focus", failure_type="focus_lost",
+            steps=[_step("focus_window", "refocus", window="notepad")], confidence=0.9,
+        )],
+        config=fast_config(settle_after_recovery_s=0.5),
+    )
+    fakes["actions"].fail_next_type = True
+    session.run("type hello")
+
+    assert 0.5 in slept  # the post-recovery settle fired, honoring config (not a literal)
+
+
 def test_unhealed_failure_triggers_replan_then_stops(harness):
     session, fakes, events = harness(
         plans=[

@@ -218,7 +218,62 @@ def _scenarios() -> list[Scenario]:
         ),
     ))
 
+    scenarios.append(Scenario(
+        name="partial_progress_no_double_execution",
+        description="Step 1 (open) succeeds; step 2 (type) fails once and recovers. "
+                    "Recovery must retry ONLY the failed step — the app is opened exactly once.",
+        instruction="open notepad and type hello",
+        build=lambda: _partial_progress_build(),
+        outcome=lambda fakes, result: fakes["actions"].typed == ["hello"],
+        behaved=lambda fakes, result: fakes["apps"].opened == ["notepad"],  # never twice
+        recovery_possible=True,
+    ))
+
+    scenarios.append(Scenario(
+        name="modal_dialog_recovery",
+        description="A blocking dialog hides the target; a modal_dialog "
+                    "hypothesis dismisses it, then the original click lands.",
+        instruction="click continue in the wizard",
+        build=lambda: _modal_dialog_build(),
+        outcome=lambda fakes, result: len(fakes["actions"].clicks) == 1,
+        recovery_possible=True,
+    ))
+
     return scenarios
+
+
+def _partial_progress_build():
+    session, fakes, events = build_simulated_session(
+        plans=[[
+            _step("open_app", "open notepad", app="notepad", wait=0.0),
+            _step("type", "type hello", text="hello", app="notepad"),
+        ]],
+        healing=[HealingPlan(
+            diagnosis="window lost focus", failure_type="focus_lost",
+            steps=[_step("focus_window", "refocus notepad", window="notepad")],
+            confidence=0.9,
+        )],
+    )
+    fakes["actions"].fail_next_type = True   # the type fails exactly once
+    return session, fakes, events
+
+
+def _modal_dialog_build():
+    # The target ("Continue") is hidden behind an alert for the first several
+    # observations, then appears — so the initial click fails, recovery clears
+    # the dialog, and the retried click finds it.
+    alert = ["Alert", "OK", "Warning", "Details"]
+    session, fakes, events = build_simulated_session(
+        plans=[[_step("click", "click Continue", find="Continue", app="wizard")]],
+        screens=[alert, alert, alert, alert, ["Continue", "Home", "Settings", "Next"]],
+        windows=["wizard - window"],
+        healing=[HealingPlan(
+            diagnosis="a modal dialog is blocking the control", failure_type="modal_dialog",
+            steps=[_step("press", "dismiss the dialog", key="esc")],
+            confidence=0.9,
+        )],
+    )
+    return session, fakes, events
 
 
 def _focus_loss_build():

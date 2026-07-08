@@ -83,10 +83,18 @@ class EngineConfig:
     describe_max_elements: int = 40        # elements listed in the planner view
     describe_max_chars: int = 4000         # char budget of the planner view
 
-    # Settle delays (seconds)
+    # Settle delays (seconds). Load-bearing for real UI — tune, don't delete.
     settle_after_launch_s: float = 2.5
     settle_after_step_s: float = 0.2
     settle_before_input_s: float = 0.2
+    settle_before_read_s: float = 1.0      # let the screen finish rendering before READ_SCREEN
+    find_retry_wait_s: float = 1.0         # wait before re-observing when an element isn't found yet
+    recovery_retry_wait_s: float = 1.0     # backoff between recovery attempts
+    # Reliability (Sprint 5): after a recovery action (dismiss dialog, refocus…)
+    # let the screen settle BEFORE measuring whether the failure cleared —
+    # otherwise recovery is judged on a half-rendered screen and falsely fails.
+    # Real-screen heuristic: the value is validated by the eval suite, not here.
+    settle_after_recovery_s: float = 0.5
     window_appear_timeout_s: float = 10.0
 
     # Paths

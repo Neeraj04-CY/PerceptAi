@@ -129,10 +129,17 @@ export default function RunnersPage() {
 
 function RegisteredPanel({ runner, onDismiss }: { runner: NewRunner; onDismiss: () => void }) {
   const setup = [
+    `# 1. install the runner (from the repo)`,
+    `pip install -e .`,
+    ``,
+    `# 2. set the credentials from this registration`,
     `export RUNNER_PLANE_URL=${API_V1}`,
     `export RUNNER_TOKEN=${runner.token}`,
     `export RUNNER_SIGNING_KEY=${runner.signing_key}`,
-    `python -m runner`,
+    ``,
+    `# 3. verify the host is ready, then start`,
+    `perceptai-runner --doctor`,
+    `perceptai-runner`,
   ].join("\n");
   return (
     <motion.div
@@ -151,12 +158,14 @@ function RegisteredPanel({ runner, onDismiss }: { runner: NewRunner; onDismiss: 
       <div className="p-5 space-y-3">
         <p className="text-[13px] text-white/70 leading-relaxed">
           Copy the token and signing key now — they are hashed at rest and cannot be shown again.
-          Set them on the runner host and start it:
+          Set them on the runner host, then run <code className="font-mono text-accent/90">--doctor</code> to
+          confirm the environment is ready before starting:
         </p>
         <CopyBlock label="setup" value={setup} />
         <p className="text-[12px] text-white/45">
-          The runner needs Python with the engine installed. It takes over the real mouse and
-          keyboard on that host — run it on a machine dedicated to automation.
+          <code className="font-mono">--doctor</code> checks dependencies, screen access, plane
+          connectivity and credentials, and tells you exactly how to fix anything missing. The runner
+          takes over the real mouse and keyboard on that host — run it on a machine dedicated to automation.
         </p>
       </div>
     </motion.div>

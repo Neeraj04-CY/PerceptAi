@@ -553,7 +553,7 @@ class ExecutionEngine:
             return self._s.actions.scroll(width // 2, height // 2, direction)
 
         if action == ActionType.READ_SCREEN:
-            time.sleep(1.0)
+            time.sleep(self._config.settle_before_read_s)
             world = self._perceive(task)
             goal_info = str(params.get("find") or context.instruction)
             source = context.sources[-1] if context.sources else (state.current_window or "screen")
@@ -606,7 +606,7 @@ class ExecutionEngine:
                         return element
                 except Exception:
                     pass
-            time.sleep(1)
+            time.sleep(self._config.find_retry_wait_s)
         return None
 
     @staticmethod
@@ -676,7 +676,7 @@ class ExecutionEngine:
             if not plan.steps:
                 outcome = self._s.recovery.assess(plan, 0, False, False, False)
                 reasoning.record_recovery_outcome(rstate, plan, outcome)
-                time.sleep(1)
+                time.sleep(self._config.recovery_retry_wait_s)
                 continue
 
             all_ok = True
@@ -691,6 +691,12 @@ class ExecutionEngine:
                 if not r.ok:
                     all_ok = False
                     break
+
+            # Let the recovery action take visible effect before judging it:
+            # measuring a half-rendered screen (a dialog still closing, focus
+            # still shifting) would falsely reject a recovery that worked.
+            if all_ok and steps_run:
+                time.sleep(self._config.settle_after_recovery_s)
 
             # Measure the recovery instead of assuming it: the original
             # failure condition must no longer hold in the fresh world.
@@ -736,7 +742,7 @@ class ExecutionEngine:
                 self._s.emit(EventType.HEALING_RESULT, task, healed=True,
                              diagnosis=outcome.hypothesis_explanation)
                 return True
-            time.sleep(1)
+            time.sleep(self._config.recovery_retry_wait_s)
         return False
 
     @staticmethod
@@ -963,7 +969,7 @@ class ExecutionEngine:
             EventType.TASK_COMPLETED, task,
             status=status.value, duration_s=duration, total_steps=len(executed),
             verification=verification.to_dict(), summary=result.summary,
-            report=report.to_dict(),
+            report=report.to_dict(), failure_type=failure_type,
         )
         return result
 
