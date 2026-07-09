@@ -431,6 +431,15 @@ function SecretsTab({ orgId, secrets, workspaces, canManage, onChanged }: {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 flex items-start gap-2.5">
+        <KeySquare size={14} className="text-accent mt-0.5 shrink-0" />
+        <p className="text-[12.5px] leading-relaxed text-white/55">
+          Use a secret in an automation by referencing it as{" "}
+          <code className="font-mono text-accent/90">{"{{secret:NAME}}"}</code> — the agent injects the
+          value only into a confirmed credential field, and the value is never sent to the model, the
+          event stream, the report, or any log. Values are write-only here and encrypted at rest.
+        </p>
+      </div>
       {canManage && (
         <Card title="Add secret">
           <div className="flex flex-wrap items-center gap-2">

@@ -33,6 +33,7 @@ class ControlPlane(Protocol):
     def post_result(self, session_id: str, report: dict) -> None: ...
     def get_control(self, session_id: str) -> dict: ...
     def post_approval_request(self, session_id: str, request: dict) -> None: ...
+    def fetch_secret(self, session_id: str, name: str) -> Optional[str]: ...
 
 
 # A factory that builds an execution session for one instruction. Injected so
@@ -40,6 +41,9 @@ class ControlPlane(Protocol):
 SessionFactory = Callable[[str], Any]
 # Builds the ControlChannel for a session (Step 3 injects the remote one).
 ControlFactory = Callable[[str], Any]
+# Builds the SecretResolver for a session, given the signed work order (so it
+# can read the available secret names). Injects the remote resolver.
+SecretFactory = Callable[[str, dict], Any]
 
 
 class EventPump:
@@ -109,11 +113,13 @@ class EventPump:
 class Worker:
     def __init__(self, client: ControlPlane, config: RunnerConfig,
                  session_factory: Optional[SessionFactory] = None,
-                 control_factory: Optional[ControlFactory] = None):
+                 control_factory: Optional[ControlFactory] = None,
+                 secrets_factory: Optional[SecretFactory] = None):
         self._client = client
         self._config = config
         self._session_factory = session_factory or _default_session_factory
         self._control_factory = control_factory
+        self._secrets_factory = secrets_factory
         self._current_session_id: Optional[str] = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -194,6 +200,10 @@ class Worker:
         if self._control_factory is not None:
             # Swap the pass-through channel for the remote one.
             session.control = self._control_factory(session_id)
+        if self._secrets_factory is not None:
+            # Resolve secrets over the plane; values are fetched on demand and
+            # zeroized when the session's run() finally purges.
+            session.secrets = self._secrets_factory(session_id, order)
 
         pump = EventPump(
             session.events,

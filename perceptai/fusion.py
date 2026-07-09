@@ -193,6 +193,10 @@ class FusionEngine:
                 sources.append(value)
 
         interactive = role in INTERACTIVE_ROLES or bool(attributes.get("clickable"))
+        # `secure` is OR-ed across sources — a password field is secure even if
+        # only one source (DOM type=password / UIA IsPassword) detected it, and
+        # a source that missed it must never downgrade it.
+        secure = any(bool(o.attributes.get("secure")) for o, _w in ranked)
         return UIElement(
             id="",  # assigned after final ordering
             role=role,
@@ -203,6 +207,7 @@ class FusionEngine:
             interactive=interactive,
             enabled=bool(attributes.get("enabled", True)),
             focused=bool(attributes.get("focused", False)),
+            secure=secure,
             value=str(attributes.get("value", "")),
             window=window,
             attributes=attributes,

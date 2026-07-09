@@ -57,14 +57,19 @@ def _engine_config(EngineConfig):
     return engine_config
 
 
-def _make_session(AgentSession, EngineConfig, *, control=None, overrides=None):
+def _make_session(AgentSession, EngineConfig, *, control=None, overrides=None,
+                  secrets=None):
     global _last_session
     config = _engine_config(EngineConfig)
     for key, value in (overrides or {}).items():
         if value not in (None, ""):
             setattr(config, key, value)
-    session = AgentSession(config, control=control) if control is not None \
-        else AgentSession(config)
+    kwargs = {}
+    if control is not None:
+        kwargs["control"] = control
+    if secrets is not None:
+        kwargs["secrets"] = secrets
+    session = AgentSession(config, **kwargs)
     with _registry_lock:
         _last_session = session
     return session
@@ -131,7 +136,8 @@ def execute_task(instruction: str) -> Tuple[Optional[object], Optional[str]]:
 
 
 def execute_task_stream(instruction: str, *, control=None,
-                        approval_risk_threshold: str = "") -> Generator[dict, None, None]:
+                        approval_risk_threshold: str = "",
+                        secrets=None) -> Generator[dict, None, None]:
     """Run one task, yielding dashboard-format SSE dicts as events happen.
 
     `control` is an optional perceptai ControlChannel (from the API's control
@@ -147,7 +153,7 @@ def execute_task_stream(instruction: str, *, control=None,
         return
 
     session = _make_session(
-        AgentSession, EngineConfig, control=control,
+        AgentSession, EngineConfig, control=control, secrets=secrets,
         overrides={"approval_risk_threshold": approval_risk_threshold},
     )
     for item in _relay(session.events, lambda: session.run(instruction),

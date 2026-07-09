@@ -124,6 +124,10 @@ async def execute_stream(
     from control_registry import registry
     approval_threshold = _workspace_approval_threshold(db, body.workspace_id)
     control = registry().open(session_id)
+    # Secrets: resolve the session's workspace vault at the action layer. Values
+    # are decrypted on demand and zeroized when the run ends.
+    from secrets_resolver import build_local_resolver
+    secrets = build_local_resolver(db, scope.get("org_id"), scope.get("workspace_id"))
 
     async def generate():
         yield sse({"type": "session_id", "session_id": session_id})
@@ -135,7 +139,7 @@ async def execute_stream(
 
         stream = execute_task_stream(
             body.instruction, control=control,
-            approval_risk_threshold=approval_threshold,
+            approval_risk_threshold=approval_threshold, secrets=secrets,
         )
         async for event in athread_iter(stream):
             if event is None:

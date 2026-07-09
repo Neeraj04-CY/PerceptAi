@@ -29,6 +29,8 @@ from .contracts import (
     DecisionType,
     ExecutionState,
     PlannerOutput,
+    RiskFlag,
+    RiskLevel,
     RunControl,
     Step,
     StepResult,
@@ -43,6 +45,7 @@ from .contracts import (
 )
 from .events import EventType
 from .reasoning import ReasoningState
+from .secrets import parse_secret_reference
 
 if TYPE_CHECKING:
     from .session import AgentSession
@@ -280,7 +283,7 @@ class ExecutionEngine:
         return self._s.planner.plan(
             task.instruction, world_view, executed, windows,
             source=source, goal=context.goal, known_facts=context.facts,
-            strategy=rstate.strategy,
+            strategy=rstate.strategy, available_secrets=self._s.secrets.names(),
         )
 
     def _append_known_controls(self, world_view: str, state: ExecutionState) -> str:
@@ -523,7 +526,12 @@ class ExecutionEngine:
             return outcome
 
         if action in (ActionType.TYPE, ActionType.CLEAR_TYPE):
-            text = self._resolve_placeholder(str(params.get("text", "")), context)
+            raw = str(params.get("text", ""))
+            secret_name = parse_secret_reference(raw)
+            if secret_name is not None:
+                return self._inject_secret(task, step, secret_name, state,
+                                           clear=(action == ActionType.CLEAR_TYPE))
+            text = self._resolve_placeholder(raw, context)
             if not text:
                 return ActionOutcome(ok=False, error="type step has no text")
             self._ensure_focus(step, state)
@@ -567,6 +575,92 @@ class ExecutionEngine:
             )
 
         return ActionOutcome(ok=False, error=f"Unknown action: {action}")
+
+    # ---------------------------------------------------------------- secrets
+
+    @staticmethod
+    def _classify_secret_target(world: Optional[WorldState]) -> str:
+        """secure | unsafe | unknown — from the focused element. A secret is
+        only ever typed into a field a source confirmed is a credential input;
+        an unclassifiable field is 'unknown' and must not receive one blind."""
+        focused = next((e for e in getattr(world, "elements", []) if e.focused), None)
+        if focused is None:
+            return "unknown"
+        return "secure" if focused.secure else "unsafe"
+
+    def _inject_secret(self, task: Task, step: Step, name: str,
+                       state: ExecutionState, clear: bool) -> ActionOutcome:
+        """Type a secret value into the focused field — but only after confirming
+        it is a credential input. The value is fetched out-of-band at this
+        instant, typed, and never recorded: the step, events and report keep
+        only the masked reference. A non-credential field is a hard refusal; an
+        unclassifiable field escalates to approval before any injection."""
+        self._ensure_focus(step, state)
+        time.sleep(self._config.settle_before_input_s)
+
+        classification = self._classify_secret_target(self._perceive(task))
+        if classification == "unsafe":
+            state.last_failure_type = "secret_field_unsafe"
+            return ActionOutcome(ok=False, error=(
+                f"refusing to inject secret '{name}': the focused field is not a "
+                "credential input"))
+        if classification == "unknown" and not self._approve_secret(task, step, name, state):
+            state.last_failure_type = "approval_denied"
+            return ActionOutcome(ok=False, error=(
+                f"secret '{name}' not injected: could not confirm a credential field "
+                "and injection was not approved"))
+
+        value = self._s.secrets.resolve(name)
+        if not value:
+            state.last_failure_type = "secret_unavailable"
+            return ActionOutcome(ok=False, error=f"secret '{name}' is unavailable")
+        try:
+            outcome = (self._s.actions.clear_and_type(value) if clear
+                       else self._s.actions.type_text(value))
+        finally:
+            value = None  # drop the transient copy; the bytearray is zeroized at run end
+            # The clipboard-paste primitive leaves the value on the system
+            # clipboard — never leave a secret there for another app to read.
+            self._clear_clipboard()
+
+        if outcome.ok:
+            self._s.emit(EventType.SECRET_USED, task,
+                         step_number=state.steps_executed, name=name)
+        # The recorded outcome carries the masked reference, never the value:
+        # the actions' outcome.data (which holds the typed text) is discarded.
+        return ActionOutcome(ok=outcome.ok, error=outcome.error,
+                             data={"secret": name, "masked": True})
+
+    @staticmethod
+    def _clear_clipboard() -> None:
+        try:
+            import pyperclip  # lazy
+            pyperclip.copy("")
+        except Exception:
+            pass
+
+    def _approve_secret(self, task: Task, step: Step, name: str,
+                        state: ExecutionState) -> bool:
+        """Escalate to human approval when the target field can't be verified as
+        a credential input — never inject a credential blind."""
+        flags = [RiskFlag(kind="credentials", level=RiskLevel.HIGH,
+                          summary="Injecting a secret into an unverified field",
+                          detail=f"secret: {name}")]
+        request = ApprovalRequest(
+            request_id=uuid.uuid4().hex[:12], step_index=state.steps_executed,
+            action=step.action.value,
+            summary=f"Enter secret '{name}' (target field could not be verified as secure)",
+            level=RiskLevel.HIGH, risks=flags)
+        self._s.emit(EventType.APPROVAL_REQUESTED, task,
+                     request_id=request.request_id, step_number=request.step_index,
+                     action=request.action, summary=request.summary,
+                     level=RiskLevel.HIGH.value, risks=[f.to_dict() for f in flags])
+        resolution = self._s.control.request_approval(request, self._config.max_approval_wait_s)
+        self._s.emit(EventType.APPROVAL_DECIDED, task,
+                     request_id=request.request_id, step_number=request.step_index,
+                     decision=resolution.decision.value, auto=resolution.auto,
+                     decided_by=resolution.decided_by, reason=resolution.reason)
+        return resolution.decision == ApprovalDecision.GRANT
 
     def _ensure_focus(self, step: Step, state: ExecutionState) -> None:
         target = str(

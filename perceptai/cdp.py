@@ -47,6 +47,7 @@ class DomNode:
     h: float
     focusable: bool = False
     disabled: bool = False
+    secure: bool = False   # <input type=password> — the secrets layer's guard
     value: str = ""
 
 
@@ -169,12 +170,13 @@ class CDPAccessibilityReader:
         bounds = self._bounds_by_backend_id(snap)
         if not bounds:
             return None
+        secure_ids = self._secure_backend_ids(snap)
         origin = self._content_origin(geo)
         nodes: list[DomNode] = []
         for ax_node in ax.get("nodes", []) or []:
             if len(nodes) >= max_nodes:
                 break
-            node = self._ax_to_node(ax_node, bounds)
+            node = self._ax_to_node(ax_node, bounds, secure_ids)
             if node is not None:
                 nodes.append(node)
         return DomSnapshot(
@@ -210,8 +212,34 @@ class CDPAccessibilityReader:
                 return (p.get("value") or {}).get("value")
         return None
 
+    @staticmethod
+    def _secure_backend_ids(snap: dict) -> set[int]:
+        """backendNodeId of every <input type=password> — the fields the
+        secrets layer is allowed to type into. From the DOMSnapshot node table
+        (nodeName + attributes are string-table indices)."""
+        strings = snap.get("strings", []) or []
+
+        def s(i: int) -> str:
+            return strings[i] if 0 <= i < len(strings) else ""
+
+        ids: set[int] = set()
+        for doc in snap.get("documents", []) or []:
+            nodes = doc.get("nodes", {}) or {}
+            names = nodes.get("nodeName", []) or []
+            backend = nodes.get("backendNodeId", []) or []
+            attrs = nodes.get("attributes", []) or []
+            for i, backend_id in enumerate(backend):
+                if i >= len(names) or s(names[i]).upper() != "INPUT":
+                    continue
+                a = attrs[i] if i < len(attrs) else []
+                for j in range(0, len(a) - 1, 2):
+                    if s(a[j]).lower() == "type" and s(a[j + 1]).lower() == "password":
+                        ids.add(int(backend_id))
+        return ids
+
     def _ax_to_node(self, ax_node: dict,
-                    bounds: dict[int, tuple[float, float, float, float]]) -> Optional[DomNode]:
+                    bounds: dict[int, tuple[float, float, float, float]],
+                    secure_ids: set[int]) -> Optional[DomNode]:
         if ax_node.get("ignored"):
             return None
         backend_id = ax_node.get("backendDOMNodeId")
@@ -226,5 +254,6 @@ class CDPAccessibilityReader:
             role=role, name=name, x=x, y=y, w=w, h=h,
             focusable=bool(self._ax_prop(ax_node, "focusable")),
             disabled=bool(self._ax_prop(ax_node, "disabled")),
+            secure=int(backend_id) in secure_ids,
             value=str((ax_node.get("value") or {}).get("value", "") or ""),
         )

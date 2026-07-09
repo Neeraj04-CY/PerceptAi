@@ -70,3 +70,13 @@ class HttpControlPlane:
         self._s.post(self._url(f"/runners/executions/{session_id}/approval-request"),
                      json={"request": request},
                      timeout=self._c.request_timeout_s).raise_for_status()
+
+    # --- secret transport (fetch one value over TLS, on demand) ---
+
+    def fetch_secret(self, session_id: str, name: str) -> Optional[str]:
+        r = self._s.post(self._url(f"/runners/executions/{session_id}/secrets"),
+                         json={"name": name}, timeout=self._c.request_timeout_s)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json().get("value")

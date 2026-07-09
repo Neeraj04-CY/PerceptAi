@@ -11,6 +11,7 @@ import {
   Check,
   X,
   UserCheck,
+  KeyRound,
 } from "lucide-react";
 import { getSessionEvents, type ApiEventRow } from "@/lib/api";
 import { isAbortError } from "@/lib/utils";
@@ -30,6 +31,7 @@ const TRUST_TYPES = new Set([
   "risk_flagged",
   "approval_requested",
   "approval_decided",
+  "secret_used",
 ]);
 
 interface RiskFlag {
@@ -82,6 +84,7 @@ export function TrustTimeline({ sessionId }: { sessionId: string }) {
       e.type === "execution_stopped" ||
       (e.type === "approval_decided" && !e.payload?.auto)
   ).length;
+  const secrets = trust.filter((e) => e.type === "secret_used").length;
 
   return (
     <Card>
@@ -95,6 +98,7 @@ export function TrustTimeline({ sessionId }: { sessionId: string }) {
         <div className="flex items-center gap-3 font-mono text-[10px] text-white/40">
           <span>{risks} risk{risks === 1 ? "" : "s"}</span>
           <span>{approvals} approval{approvals === 1 ? "" : "s"}</span>
+          {secrets > 0 && <span>{secrets} secret{secrets === 1 ? "" : "s"}</span>}
           <span>{interventions} intervention{interventions === 1 ? "" : "s"}</span>
         </div>
       </div>
@@ -192,6 +196,10 @@ function describe(event: ApiEventRow): {
     case "execution_stopped":
       return { icon: <Square size={13} />, tone: "danger", title: "Stopped",
         detail: String(p.reason || "") };
+    case "secret_used":
+      return { icon: <KeyRound size={14} />, tone: "neutral",
+        title: `Secret injected: ${String(p.name || "")}`,
+        detail: "value never exposed to the model, events, report or logs" };
     default:
       return { icon: <UserCheck size={14} />, tone: "neutral", title: event.type };
   }

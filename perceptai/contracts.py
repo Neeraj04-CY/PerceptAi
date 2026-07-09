@@ -147,6 +147,10 @@ class UIElement:
     interactive: bool = False
     enabled: bool = True
     focused: bool = False
+    # A credential/password input (DOM input[type=password], UIA secure field).
+    # OR-ed across sources: if any source says secure, the field is secure. The
+    # secrets layer only ever injects a secret value into a secure field.
+    secure: bool = False
     value: str = ""
     window: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)

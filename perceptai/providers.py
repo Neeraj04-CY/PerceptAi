@@ -347,6 +347,8 @@ class UiaProvider(PerceptionProvider):
             automation_id = str(getattr(control, "AutomationId", "") or "")
             if automation_id:
                 attributes["automation_id"] = automation_id
+            if getattr(control, "IsPassword", False):
+                attributes["secure"] = True  # a credential field — secrets only go here
             return Observation(
                 source=self.source, role=role, text=name, bbox=bbox,
                 confidence=1.0, window=window_title, attributes=attributes,
@@ -428,15 +430,17 @@ class DomProvider(PerceptionProvider):
             bbox = BoundingBox(left, top, left + int(node.w), top + int(node.h))
             if not bbox.valid:
                 continue
+            attrs: dict[str, Any] = {
+                "interactive": interactive,
+                "enabled": not node.disabled,
+                "ax_role": node.role,
+                "value": node.value,
+            }
+            if node.secure:
+                attrs["secure"] = True
             observations.append(Observation(
                 source=self.source, role=role, text=name, bbox=bbox,
-                confidence=1.0, window=window,
-                attributes={
-                    "interactive": interactive,
-                    "enabled": not node.disabled,
-                    "ax_role": node.role,
-                    "value": node.value,
-                },
+                confidence=1.0, window=window, attributes=attrs,
             ))
         return observations
 

@@ -68,13 +68,18 @@ def derive_status(last_heartbeat_at: Optional[str], current_session_id: Optional
 
 
 def build_work_order(session: dict[str, Any], *, approval_risk_threshold: str = "",
+                     available_secrets: Optional[list[str]] = None,
                      issued_at: Optional[datetime] = None,
                      ttl_seconds: int = 300) -> dict[str, Any]:
     """The signed payload a runner executes. Transport-agnostic and minimal:
     the plain-English instruction, the workspace risk policy the engine gates
     on, identifiers to stream results back, and issuance/expiry + nonce so a
-    stale or replayed order is rejected. Secrets are NOT included (task mode);
-    secret injection is a documented mission fast-follow."""
+    stale or replayed order is rejected.
+
+    Secret NAMES (never values) are included so the runner's planner can
+    reference them; the runner fetches each value on demand over an authorized
+    channel and never persists it. The signature covers the names, so the set
+    of usable secrets can't be tampered in transit."""
     issued_at = issued_at or utc_now()
     return {
         "session_id": str(session["id"]),
@@ -83,6 +88,7 @@ def build_work_order(session: dict[str, Any], *, approval_risk_threshold: str = 
         "org_id": str(session["org_id"]) if session.get("org_id") else None,
         "workspace_id": str(session["workspace_id"]) if session.get("workspace_id") else None,
         "approval_risk_threshold": approval_risk_threshold or "",
+        "available_secrets": sorted(available_secrets or []),
         "issued_at": _iso(issued_at),
         "expires_at": _iso(issued_at + timedelta(seconds=ttl_seconds)),
         "nonce": _secrets.token_hex(8),
@@ -260,8 +266,19 @@ def workspace_approval_threshold(db, workspace_id: Optional[str]) -> str:
 def issue_work_order(db, runner: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
     """Build + sign the work order for a freshly claimed session."""
     threshold = workspace_approval_threshold(db, session.get("workspace_id"))
-    order = build_work_order(session, approval_risk_threshold=threshold)
+    order = build_work_order(session, approval_risk_threshold=threshold,
+                             available_secrets=_secret_names(db, session))
     return sign_for_runner(runner["id"], order)
+
+
+def _secret_names(db, session: dict[str, Any]) -> list[str]:
+    """Secret NAMES in the session's scope (never values) — for the work order."""
+    try:
+        from secrets_resolver import build_local_resolver
+        resolver = build_local_resolver(db, session.get("org_id"), session.get("workspace_id"))
+        return resolver.names() if resolver is not None else []
+    except Exception:
+        return []
 
 
 def enqueue_session(db, *, user_id: str, org_id: str, instruction: str,

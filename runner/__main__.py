@@ -70,8 +70,13 @@ def _serve() -> int:
         _print_report(report)
 
     from .control import RemoteControlChannel
-    worker = Worker(client, config,
-                    control_factory=lambda sid: RemoteControlChannel(client, sid))
+    from .secrets import RemoteSecretResolver
+    worker = Worker(
+        client, config,
+        control_factory=lambda sid: RemoteControlChannel(client, sid),
+        secrets_factory=lambda sid, order: RemoteSecretResolver(
+            client, sid, order.get("available_secrets", [])),
+    )
 
     def _shutdown(*_):
         print("\nRunner shutting down…", flush=True)

@@ -60,6 +60,10 @@ class ApprovalRequestBody(BaseModel):
     request: dict  # the ApprovalRequest the runtime raised
 
 
+class SecretRequestBody(BaseModel):
+    name: str
+
+
 def get_current_runner(x_runner_token: str = Header(..., alias="X-Runner-Token")) -> dict:
     """Resolve the runner-scoped token to its row (401 on failure)."""
     return runner_svc.authenticate_runner(get_service_db(), x_runner_token)
@@ -208,6 +212,28 @@ async def read_execution_control(session_id: str,
     control = ctrl.get_control(db, session_id)
     return {"state": control.get("state", "running"),
             "approval_decision": control.get("approval_decision")}
+
+
+@router.post("/executions/{session_id}/secrets")
+async def fetch_execution_secret(session_id: str, body: SecretRequestBody,
+                                 runner: dict = Depends(get_current_runner)):
+    """Return one secret VALUE to the authorized runner over TLS — the ONE
+    value-carrying surface. Authorized (this runner owns this session) and
+    scoped (the session's workspace vault). The value is decrypted for this
+    response only, then the resolver is purged; it is never logged or persisted."""
+    db = get_service_db()
+    session = _owned_session(db, session_id, runner)
+    from secrets_resolver import build_local_resolver
+    resolver = build_local_resolver(db, session.get("org_id"), session.get("workspace_id"))
+    if resolver is None:
+        raise HTTPException(404, "no secrets in scope for this execution")
+    try:
+        value = resolver.resolve(body.name)
+    finally:
+        resolver.purge()  # zeroize immediately after this single fetch
+    if value is None:
+        raise HTTPException(404, f"secret '{body.name}' not found in scope")
+    return {"value": value}
 
 
 @router.post("/executions/{session_id}/approval-request")

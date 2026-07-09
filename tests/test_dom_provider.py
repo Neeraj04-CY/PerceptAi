@@ -4,7 +4,7 @@ validated by the perception bench; here we prove the provider builds correct
 observations, filters noise, and fuses with OCR (DOM wins role/name)."""
 from __future__ import annotations
 
-from perceptai.cdp import DomNode, DomSnapshot
+from perceptai.cdp import CDPAccessibilityReader, DomNode, DomSnapshot
 from perceptai.contracts import BoundingBox, Observation, SourceType
 from perceptai.fusion import FusionEngine
 from perceptai.oscontrol import AppLauncher
@@ -106,6 +106,55 @@ def test_dom_wins_role_and_name_over_ocr_when_fused():
     assert el.role == "button"                 # DOM (trust 0.98) beats OCR
     assert set(el.sources) == {"dom", "ocr"}
     assert el.interactive and el.confidence <= 0.99
+
+
+# --------------------------------------------- secure (credential) fields
+
+def test_password_field_is_marked_secure():
+    snap = _snapshot([DomNode(role="textbox", name="Password", x=0, y=0, w=100, h=20,
+                              focusable=True, secure=True)])
+    obs = _provider(snap).observe(_frame())
+    assert obs[0].role == "edit" and obs[0].attributes.get("secure") is True
+
+
+def test_non_password_field_is_not_secure():
+    snap = _snapshot([DomNode(role="textbox", name="Email", x=0, y=0, w=100, h=20,
+                              focusable=True)])
+    assert "secure" not in _provider(snap).observe(_frame())[0].attributes
+
+
+def test_fusion_ors_secure_across_sources():
+    # DOM says secure, OCR (overlapping, lower trust) says nothing -> secure.
+    dom = Observation(source=SourceType.DOM, role="edit", text="",
+                      bbox=BoundingBox(10, 10, 110, 30), confidence=1.0,
+                      attributes={"interactive": True, "secure": True})
+    ocr = Observation(source=SourceType.OCR, role="text", text="",
+                      bbox=BoundingBox(12, 12, 108, 28), confidence=0.8)
+    el = FusionEngine(fast_config()).fuse([dom, ocr])[0]
+    assert el.secure is True
+
+    # UIA says secure, DOM (higher trust) has no secure key -> still secure.
+    uia = Observation(source=SourceType.UIA, role="edit", text="pw",
+                      bbox=BoundingBox(0, 0, 100, 20), confidence=1.0,
+                      attributes={"enabled": True, "secure": True})
+    dom2 = Observation(source=SourceType.DOM, role="edit", text="pw",
+                       bbox=BoundingBox(1, 1, 99, 19), confidence=1.0,
+                       attributes={"interactive": True})
+    assert FusionEngine(fast_config()).fuse([uia, dom2])[0].secure is True
+
+
+def test_reader_finds_password_inputs_in_dom_snapshot():
+    snap = {
+        "strings": ["INPUT", "type", "password", "text", "DIV"],
+        "documents": [{
+            "nodes": {
+                "nodeName": [0, 0, 4],              # INPUT, INPUT, DIV
+                "backendNodeId": [11, 22, 33],
+                "attributes": [[1, 2], [1, 3], []],  # type=password, type=text, none
+            },
+        }],
+    }
+    assert CDPAccessibilityReader._secure_backend_ids(snap) == {11}
 
 
 # ------------------------------------------------------ debuggable launch

@@ -35,6 +35,7 @@ _TRUST_EVENTS = frozenset({
     EventType.RISK_FLAGGED,
     EventType.APPROVAL_REQUESTED,
     EventType.APPROVAL_DECIDED,
+    EventType.SECRET_USED,
 })
 
 

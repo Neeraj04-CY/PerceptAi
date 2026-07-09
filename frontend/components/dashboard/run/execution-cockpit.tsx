@@ -15,7 +15,7 @@ import {
   FileText,
   ArrowRight,
 } from "lucide-react";
-import { Lightbulb } from "lucide-react";
+import { Lightbulb, KeyRound } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { remediationFor } from "@/lib/remediation";
@@ -75,6 +75,7 @@ export interface CockpitState {
   pending: PendingApproval | null;
   evidence: number;
   interventions: number;
+  secretsUsed: string[];   // names only — the value is never on the wire
   _steps: string[];
   _started: boolean;
 }
@@ -95,6 +96,7 @@ export function emptyCockpit(): CockpitState {
     pending: null,
     evidence: 0,
     interventions: 0,
+    secretsUsed: [],
     _steps: [],
     _started: false,
   };
@@ -208,6 +210,16 @@ function applyTrust(
         ...s,
         risks: mergeRisks(s.risks, risks),
       };
+
+    case "secret_used": {
+      const name = String(e.name || "");
+      return {
+        ...s,
+        secretsUsed: name && !s.secretsUsed.includes(name)
+          ? [...s.secretsUsed, name]
+          : s.secretsUsed,
+      };
+    }
 
     case "approval_requested":
       return {
@@ -462,6 +474,20 @@ export function ExecutionCockpit({ state, running, onControl, onApproval }: Cock
           </div>
         </div>
       </div>
+
+      {/* Secrets used — names only; the value never crosses the wire */}
+      {state.secretsUsed.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap border-t border-white/[0.06] px-4 py-2.5">
+          <KeyRound size={12} className="text-white/45 shrink-0" />
+          <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-white/35">secrets used</span>
+          {state.secretsUsed.map((name) => (
+            <span key={name} className="inline-flex items-center gap-1 rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-white/70">
+              {name} <span className="text-white/30">••••</span>
+            </span>
+          ))}
+          <span className="font-mono text-[9px] text-white/25 hidden sm:inline">value never shown or logged</span>
+        </div>
+      )}
 
       {/* Instrument rail: confidence, risk, evidence, progress */}
       <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-white/[0.06] divide-x divide-white/[0.06]">

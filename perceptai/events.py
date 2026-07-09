@@ -52,6 +52,8 @@ class EventType(str, Enum):
     RISK_FLAGGED = "risk_flagged"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVAL_DECIDED = "approval_decided"
+    # Audit that a secret was injected — the NAME only, never the value.
+    SECRET_USED = "secret_used"
     # Mission stream (Chapter 5). The workforce layer emits on the same
     # canonical bus; task_id carries the mission id, payloads carry work
     # order ids. Consumers derive mission views, never rebuild them.

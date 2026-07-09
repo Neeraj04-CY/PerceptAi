@@ -30,6 +30,7 @@ class Planner:
         goal: GoalSpec | None = None,
         known_facts: dict[str, str] | None = None,
         strategy: StrategyProfile | None = None,
+        available_secrets: list[str] | None = None,
     ) -> PlannerOutput:
         now = datetime.now()
         completed_summary = "\n".join(
@@ -56,6 +57,16 @@ class Planner:
                 f"- {k}: {v[:100]}" for k, v in list(known_facts.items())[:15]
             ) + "\n"
 
+        # Secret NAMES only (never values). The planner references a secret;
+        # the engine resolves and types the value at the action layer.
+        secrets_context = ""
+        if available_secrets:
+            secrets_context = (
+                "\nAvailable secrets (to enter one, set a type step's \"text\" to "
+                "{{secret:NAME}} — NEVER write or guess the actual value):\n"
+                + "\n".join(f"- {name}" for name in available_secrets[:15]) + "\n"
+            )
+
         # Strategy tunes HOW this one planner plans; it never becomes a
         # second planner or an app-specific code path.
         strategy_context = ""
@@ -66,7 +77,7 @@ class Planner:
 Current time: {now.strftime("%B %d, %Y %I:%M %p")}
 
 GOAL: {instruction}
-{goal_context}{facts_context}{strategy_context}
+{goal_context}{facts_context}{secrets_context}{strategy_context}
 Already done:
 {completed_summary}
 

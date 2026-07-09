@@ -19,6 +19,7 @@ from .contracts import Task, TaskResult
 from .control import ControlChannel
 from .events import EventBus, EventType
 from .risk import RiskAssessor
+from .secrets import NullSecretResolver, SecretResolver
 from .evidence import EvidenceCollector
 from .goal import GoalAnalyzer
 from .healer import Healer
@@ -60,6 +61,7 @@ class AgentSession:
         constraints: Optional[ConstraintManager] = None,
         control: Optional[ControlChannel] = None,
         risk: Optional[RiskAssessor] = None,
+        secrets: Optional[SecretResolver] = None,
     ):
         self.config = config or EngineConfig.from_env()
         self.id = str(uuid.uuid4())
@@ -100,6 +102,9 @@ class AgentSession:
         # go wrong" signal read before every input action.
         self.control = control or ControlChannel()
         self.risk = risk or RiskAssessor(self.config)
+        # Secret resolution is out-of-band and per-run: the default resolves
+        # nothing; the API/runner inject a workspace-scoped, zeroizing resolver.
+        self.secrets = secrets or NullSecretResolver()
 
     def emit(self, type: EventType, task: Task, **payload) -> None:
         self.events.emit(type, session_id=self.id, task_id=task.id, **payload)
@@ -110,4 +115,12 @@ class AgentSession:
 
         if isinstance(task, str):
             task = Task(instruction=task)
-        return ExecutionEngine(self).run(task)
+        try:
+            return ExecutionEngine(self).run(task)
+        finally:
+            # Secret lifetime invariant: zeroize and drop any resolved secret
+            # values the instant the run ends — success, failure, or abort.
+            try:
+                self.secrets.purge()
+            except Exception:
+                pass
