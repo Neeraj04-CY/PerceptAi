@@ -388,7 +388,7 @@ export const getAnalyticsSummary = (
 /* ------------------------------------------------------------------ */
 
 async function sendJsonAuth<T>(
-  method: "POST" | "PATCH" | "DELETE",
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: Record<string, unknown>
 ): Promise<T> {
@@ -432,6 +432,7 @@ export interface ApiWorkspace {
     allowed_capabilities?: string[] | null;
     max_cost_per_mission?: number | null;
   } | null;
+  notify_webhook_url?: string | null; // the signing secret is write-only, never returned
   created_at?: string;
 }
 
@@ -576,6 +577,22 @@ export interface ApiApproval {
   decided_at?: string | null;
 }
 
+// Unattended operations (Sprint 8): where a scheduled run executes and what
+// happens when it fails — data on the workflow schedule, enforced by the plane.
+export interface ApiWorkflowTarget {
+  kind: "this_machine" | "runner" | "any_available";
+  runner_id?: string;
+}
+
+export interface ApiWorkflowSchedule {
+  enabled?: boolean;
+  interval_minutes?: number;
+  next_run_at?: string;
+  last_run_at?: string;
+  target?: ApiWorkflowTarget;
+  on_failure?: { retries?: number; notify?: boolean };
+}
+
 export interface ApiWorkflowVariable {
   name: string;
   label?: string;
@@ -597,7 +614,7 @@ export interface ApiWorkflow {
   policy: Record<string, unknown>;
   status: "draft" | "published" | "archived";
   version: number;
-  schedule: { enabled?: boolean; interval_minutes?: number; next_run_at?: string; last_run_at?: string } | null;
+  schedule: ApiWorkflowSchedule | null;
   created_at?: string;
   updated_at?: string;
   versions?: Array<{ version: number; published_by: string; published_at: string }>;
@@ -744,5 +761,60 @@ export const getRunners = (signal?: AbortSignal) =>
   getJsonAuth<ApiRunner[]>("/runners", signal);
 export const registerRunner = (name: string) =>
   sendJsonAuth<NewRunner>("POST", "/runners", { name });
-export const dispatchRemoteRun = (instruction: string) =>
-  sendJsonAuth<{ session_id: string; status: string }>("POST", "/runners/dispatch", { instruction });
+export const dispatchRemoteRun = (instruction: string, runnerId?: string) =>
+  sendJsonAuth<{ session_id: string; status: string }>("POST", "/runners/dispatch", {
+    instruction, runner_id: runnerId ?? null,
+  });
+
+// Attention (unattended operations) — what needs a human right now
+export interface ApiAttentionItem {
+  id: string;
+  org_id: string;
+  workspace_id: string | null;
+  kind: "run_failed" | "dead_letter" | "approval_pending" | "no_runner" | "schedule_blocked";
+  ref: string;
+  title: string;
+  detail: Record<string, unknown>;
+  session_id: string | null;
+  workflow_id: string | null;
+  status: "open" | "acked";
+  created_at: string;
+  acked_by?: string | null;
+  acked_at?: string | null;
+}
+
+export const getAttention = (status: "open" | "acked" = "open", signal?: AbortSignal) =>
+  getJsonAuth<ApiAttentionItem[]>(`/attention?status=${status}`, signal);
+export const ackAttention = (id: string) =>
+  sendJsonAuth<{ ok: boolean }>("POST", `/attention/${encodeURIComponent(id)}/ack`);
+
+// Workflow run history + health
+export interface ApiWorkflowRun {
+  id: string;
+  status: string;
+  origin: string | null;
+  error: string | null;
+  execution_time: number | null;
+  created_at: string;
+  completed_at: string | null;
+  retry_of: string | null;
+  retry_count: number | null;
+  runner_id: string | null;
+}
+
+export interface ApiWorkflowHealth {
+  total: number;
+  completed: number;
+  failed: number;
+  unverified: number;
+  success_rate: number | null;
+}
+
+export const getWorkflowRuns = (id: string, limit = 50, signal?: AbortSignal) =>
+  getJsonAuth<{ runs: ApiWorkflowRun[]; health: ApiWorkflowHealth }>(
+    `/workflows/${encodeURIComponent(id)}/runs?limit=${limit}`, signal);
+
+// Workspace notification webhook (secret returned once, then write-only)
+export const setWorkspaceWebhook = (orgId: string, workspaceId: string, url: string | null) =>
+  sendJsonAuth<{ url: string | null; secret: string | null }>(
+    "PUT", `/orgs/${orgId}/workspaces/${workspaceId}/webhook`, { url });

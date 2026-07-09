@@ -116,6 +116,9 @@ class SecretCreateRequest(BaseModel):
     value: str
     workspace_id: Optional[str] = None
 
+class WorkspaceWebhookRequest(BaseModel):
+    url: Optional[str] = None  # https URL, or empty/None to clear
+
 # Workflows (Agent Studio)
 class WorkflowCreateRequest(BaseModel):
     name: str

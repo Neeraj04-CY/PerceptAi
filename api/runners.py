@@ -215,11 +215,21 @@ def reclaim_stale(db, max_attempts: Optional[int] = None) -> int:
     Returns how many were reclaimed. Never raises into the claim path."""
     max_attempts = config.RUNNER_MAX_ATTEMPTS if max_attempts is None else max_attempts
     try:
-        rows = db.table("sessions").select("id, status, attempts, claim_expires_at").in_(
+        rows = db.table("sessions").select(
+            "id, status, attempts, claim_expires_at, org_id, workspace_id, "
+            "workflow_id, instruction").in_(
             "status", ["claimed", "running"]).lt(
             "claim_expires_at", _iso(utc_now())).limit(100).execute().data or []
     except Exception:
-        return 0
+        # Pre-004 schema (no workflow_id): reclaim must keep working — retry
+        # with the 003 column set; attention is skipped without org context.
+        try:
+            rows = db.table("sessions").select(
+                "id, status, attempts, claim_expires_at").in_(
+                "status", ["claimed", "running"]).lt(
+                "claim_expires_at", _iso(utc_now())).limit(100).execute().data or []
+        except Exception:
+            return 0
     reclaimed = 0
     for row in rows:
         update = reclaim_decision(row.get("status", ""), int(row.get("attempts", 0) or 0), max_attempts)
@@ -229,7 +239,22 @@ def reclaim_stale(db, max_attempts: Optional[int] = None) -> int:
             db.table("sessions").update(update).eq("id", row["id"]).execute()
             reclaimed += 1
         except Exception:
-            pass
+            continue
+        # A dead-letter is uncertain-progress work — it is NEVER policy-retried
+        # (that stays the reclaim invariant); it goes to a human instead.
+        if update.get("status") == "failed" and row.get("org_id"):
+            try:
+                from attention import raise_attention
+                raise_attention(
+                    db, row["org_id"], kind="dead_letter", ref=str(row["id"]),
+                    title="A dispatched run was dead-lettered",
+                    detail={"error": update.get("error"),
+                            "instruction": str(row.get("instruction", ""))[:200]},
+                    workspace_id=row.get("workspace_id"),
+                    workflow_id=row.get("workflow_id"),
+                    session_id=str(row["id"]))
+            except Exception:
+                pass
     return reclaimed
 
 
@@ -284,10 +309,15 @@ def _secret_names(db, session: dict[str, Any]) -> list[str]:
 def enqueue_session(db, *, user_id: str, org_id: str, instruction: str,
                     workspace_id: Optional[str] = None,
                     workflow_id: Optional[str] = None,
-                    api_key_id: Optional[str] = None) -> dict[str, Any]:
+                    api_key_id: Optional[str] = None,
+                    origin: str = "user",
+                    retry_of: Optional[str] = None,
+                    retry_count: int = 0,
+                    target_runner_id: Optional[str] = None) -> dict[str, Any]:
     """Create a session in the work queue (status='queued') for a runner to
     claim. This is the plane's dispatch primitive; the runner never creates
-    its own work."""
+    its own work. A target_runner_id pins the work to one runner (only it can
+    claim); origin/retry_of/retry_count carry unattended-dispatch lineage."""
     row = {
         "user_id": user_id,
         "org_id": org_id,
@@ -296,6 +326,10 @@ def enqueue_session(db, *, user_id: str, org_id: str, instruction: str,
         "api_key_id": api_key_id,
         "instruction": instruction,
         "status": "queued",
+        "origin": origin if origin != "user" else None,  # column default is 'user'
+        "retry_of": retry_of,
+        "retry_count": retry_count or None,
+        "target_runner_id": target_runner_id,
     }
     row = {k: v for k, v in row.items() if v is not None}
     try:

@@ -29,6 +29,7 @@ import {
   getSecrets,
   removeMember,
   updateMemberRole,
+  setWorkspaceWebhook,
   updateWorkspacePolicy,
 } from "@/lib/api";
 
@@ -411,7 +412,99 @@ function WorkspaceCard({ orgId, workspace, allCapabilities, canManage, onChanged
           </div>
         )}
       </div>
+      <WebhookConfig orgId={orgId} workspace={workspace}
+                     canManage={canManage} onChanged={onChanged} />
     </Card>
+  );
+}
+
+/** Attention webhook: where unattended failures reach a human when nobody
+ * has the dashboard open. The signing secret is shown exactly once when the
+ * URL is set — after that it is write-only, like vault values. */
+function WebhookConfig({ orgId, workspace, canManage, onChanged }: {
+  orgId: string; workspace: ApiWorkspace; canManage: boolean; onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(workspace.notify_webhook_url ?? "");
+  const [minted, setMinted] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const apply = async (nextUrl: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await setWorkspaceWebhook(orgId, workspace.id, nextUrl);
+      setMinted(result.secret);
+      setEditing(false);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update the webhook");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 border-t border-white/[0.05] pt-3">
+      <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-white/30">
+        Attention webhook
+      </div>
+      {minted && (
+        <div className="mb-2 rounded-lg border border-accent/25 bg-accent/[0.05] px-3 py-2">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-accent">
+            signing secret — shown once, save it now
+          </p>
+          <code className="mt-1 block break-all font-mono text-[11px] text-white/85">{minted}</code>
+          <p className="mt-1 text-[10px] text-white/40">
+            Verify deliveries with HMAC-SHA256 over the request body
+            (header <code className="font-mono">X-PerceptAI-Signature</code>).
+          </p>
+        </div>
+      )}
+      {!editing ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {workspace.notify_webhook_url ? (
+            <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-white/60">
+              {workspace.notify_webhook_url}
+            </code>
+          ) : (
+            <span className="flex-1 text-[11px] text-white/30">
+              Not set — unattended failures reach the Attention inbox only.
+            </span>
+          )}
+          {canManage && (
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => { setUrl(workspace.notify_webhook_url ?? ""); setEditing(true); }}
+                      className="rounded-md bg-white/[0.04] px-2.5 h-6 font-mono text-[10px] uppercase tracking-wider text-white/50 hover:text-white transition-colors">
+                {workspace.notify_webhook_url ? "Replace" : "Set"}
+              </button>
+              {workspace.notify_webhook_url && (
+                <button onClick={() => apply(null)} disabled={busy}
+                        className="rounded-md px-2 h-6 font-mono text-[10px] uppercase tracking-wider text-white/35 hover:text-red-300 transition-colors disabled:opacity-50">
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={url} onChange={(e) => setUrl(e.target.value)}
+                 placeholder="https://hooks.example.com/perceptai"
+                 className="h-8 min-w-[240px] flex-1 rounded-md border border-white/[0.08] bg-black/30 px-3 font-mono text-[12px] text-white focus:outline-none focus:border-accent/35" />
+          <button onClick={() => apply(url.trim())} disabled={busy || !url.trim().startsWith("https://")}
+                  className="rounded-md bg-accent/15 px-2.5 h-8 font-mono text-[10px] uppercase tracking-wider text-accent hover:bg-accent/25 transition-colors disabled:opacity-50">
+            Save
+          </button>
+          <button onClick={() => setEditing(false)}
+                  className="rounded-md px-2 h-8 font-mono text-[10px] uppercase tracking-wider text-white/40 hover:text-white transition-colors">
+            Cancel
+          </button>
+        </div>
+      )}
+      {error && <p className="mt-1.5 text-[11px] text-red-300">{error}</p>}
+    </div>
   );
 }
 

@@ -7,12 +7,12 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from config import config
 from database import get_service_db
 from events_store import EventBuffer
 from models import ExecuteRequest
 from routes.analytics_routes import router as analytics_router
 from routes.approval_routes import router as approval_router
+from routes.attention_routes import router as attention_router
 from routes.control_routes import router as control_router
 from routes.runner_routes import router as runner_router
 from routes.auth_routes import router as auth_router
@@ -60,13 +60,17 @@ app.include_router(platform_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(control_router, prefix="/api/v1")
 app.include_router(runner_router, prefix="/api/v1")
+app.include_router(attention_router, prefix="/api/v1")
 
 
 @app.on_event("startup")
 async def start_scheduler():
-    if config.ENABLE_SCHEDULER:
-        from scheduler import scheduler_loop
-        asyncio.create_task(scheduler_loop())
+    # The dispatcher loop is DB-only (it enqueues work for runners) and safe
+    # on any host, including cloud — so it always runs. ENABLE_SCHEDULER now
+    # gates only the explicit this_machine target, which executes on THIS
+    # host's real desktop (the pre-Sprint-8 behavior, unchanged).
+    from scheduler import scheduler_loop
+    asyncio.create_task(scheduler_loop())
 
 
 @app.get("/api/v1/screenshot")

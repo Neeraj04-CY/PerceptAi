@@ -7,12 +7,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CalendarClock, Play, Plus, Trash2, UploadCloud } from "lucide-react";
+import { Activity, ArrowLeft, CalendarClock, Play, Plus, Trash2, UploadCloud } from "lucide-react";
 import { cn, isAbortError } from "@/lib/utils";
 import {
+  ApiRunner,
   ApiWorkflow,
+  ApiWorkflowHealth,
+  ApiWorkflowRun,
+  ApiWorkflowSchedule,
   ApiWorkflowVariable,
+  getRunners,
   getWorkflow,
+  getWorkflowRuns,
   publishWorkflow,
   renderWorkflow,
   updateWorkflow,
@@ -256,27 +262,40 @@ export default function WorkflowEditorPage() {
               <span className="text-[12px] text-white/70">Run on a schedule</span>
             </label>
             {workflow.schedule?.enabled && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {INTERVALS.map((interval) => (
-                  <button key={interval.minutes}
-                          onClick={() => patch({
-                            schedule: { ...workflow.schedule, enabled: true, interval_minutes: interval.minutes },
-                          })}
-                          className={cn("rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors",
-                                        (workflow.schedule?.interval_minutes ?? 1440) === interval.minutes
-                                          ? "border-accent/35 text-accent bg-accent/[0.07]"
-                                          : "border-white/10 text-white/40 hover:text-white")}>
-                    {interval.label}
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {INTERVALS.map((interval) => (
+                    <button key={interval.minutes}
+                            onClick={() => patch({
+                              schedule: { ...workflow.schedule, enabled: true, interval_minutes: interval.minutes },
+                            })}
+                            className={cn("rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                                          (workflow.schedule?.interval_minutes ?? 1440) === interval.minutes
+                                            ? "border-accent/35 text-accent bg-accent/[0.07]"
+                                            : "border-white/10 text-white/40 hover:text-white")}>
+                      {interval.label}
+                    </button>
+                  ))}
+                </div>
+                <ScheduleTargetPicker
+                  schedule={workflow.schedule}
+                  onChange={(schedule) => patch({ schedule })}
+                />
+                <OnFailureEditor
+                  schedule={workflow.schedule}
+                  onChange={(schedule) => patch({ schedule })}
+                />
+              </>
             )}
             <p className="mt-2.5 text-[10px] leading-relaxed text-white/30">
-              Scheduled runs execute on the machine hosting the API (requires
-              ENABLE_SCHEDULER on a dedicated runner) and use variable defaults.
-              Mission workflows run on demand only.
+              Scheduled runs use variable defaults and reach you only through
+              the Attention inbox (and the workspace webhook, if set). “This
+              machine” runs on the API host and requires ENABLE_SCHEDULER
+              there. Mission workflows run on demand only.
             </p>
           </section>
+
+          <RunHistory workflowId={workflow.id} />
 
           {(workflow.versions?.length ?? 0) > 0 && (
             <section className="glass rounded-xl p-4">
@@ -307,6 +326,177 @@ export default function WorkflowEditorPage() {
         />
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------- unattended operations config */
+
+function ScheduleTargetPicker({ schedule, onChange }: {
+  schedule: ApiWorkflowSchedule;
+  onChange: (s: ApiWorkflowSchedule) => void;
+}) {
+  const [runners, setRunners] = useState<ApiRunner[] | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    getRunners(controller.signal).then(setRunners).catch(() => setRunners([]));
+    return () => controller.abort();
+  }, []);
+
+  const kind = schedule.target?.kind ?? "this_machine";
+  const setTarget = (target: ApiWorkflowSchedule["target"]) =>
+    onChange({ ...schedule, target });
+
+  return (
+    <div className="mt-3.5">
+      <span className="mb-1.5 block font-mono text-[9px] uppercase tracking-[0.18em] text-white/30">
+        Runs on
+      </span>
+      <div className="flex flex-wrap gap-1.5">
+        <Chip active={kind === "any_available"}
+              onClick={() => setTarget({ kind: "any_available" })}>
+          any available runner
+        </Chip>
+        <Chip active={kind === "runner"}
+              onClick={() => setTarget({ kind: "runner", runner_id: schedule.target?.runner_id ?? runners?.[0]?.id })}>
+          a specific runner
+        </Chip>
+        <Chip active={kind === "this_machine"}
+              onClick={() => setTarget({ kind: "this_machine" })}>
+          this machine
+        </Chip>
+      </div>
+      {kind === "runner" && (
+        <select
+          value={schedule.target?.runner_id ?? ""}
+          onChange={(e) => setTarget({ kind: "runner", runner_id: e.target.value })}
+          className="mt-2 h-8 w-full rounded-md border border-white/[0.08] bg-black/40 px-2 font-mono text-[11px] text-white/80 focus:outline-none focus:border-accent/35"
+          aria-label="Pinned runner"
+        >
+          <option value="" disabled>{runners === null ? "Loading runners…" : runners.length === 0 ? "No runners registered" : "Choose a runner"}</option>
+          {(runners ?? []).map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name} — {r.status}
+            </option>
+          ))}
+        </select>
+      )}
+      {kind === "any_available" && runners !== null &&
+        !runners.some((r) => r.status !== "offline") && (
+        <p className="mt-1.5 font-mono text-[10px] text-amber-300/80">
+          no runner is online right now — runs will wait in the queue
+        </p>
+      )}
+    </div>
+  );
+}
+
+function OnFailureEditor({ schedule, onChange }: {
+  schedule: ApiWorkflowSchedule;
+  onChange: (s: ApiWorkflowSchedule) => void;
+}) {
+  const retries = schedule.on_failure?.retries ?? 0;
+  const notify = schedule.on_failure?.notify ?? true;
+  const set = (patch: Partial<NonNullable<ApiWorkflowSchedule["on_failure"]>>) =>
+    onChange({ ...schedule, on_failure: { retries, notify, ...patch } });
+
+  return (
+    <div className="mt-3.5">
+      <span className="mb-1.5 block font-mono text-[9px] uppercase tracking-[0.18em] text-white/30">
+        If a run fails
+      </span>
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[10px] text-white/40">retry</span>
+        {[0, 1, 2, 3].map((n) => (
+          <Chip key={n} active={retries === n} onClick={() => set({ retries: n })}>
+            {n === 0 ? "never" : `${n}×`}
+          </Chip>
+        ))}
+      </div>
+      <label className="mt-2 flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={notify}
+               onChange={(e) => set({ notify: e.target.checked })}
+               className="h-3.5 w-3.5 accent-[#00ff85]" />
+        <span className="text-[11px] text-white/55">
+          Notify when it finally fails (Attention inbox + workspace webhook)
+        </span>
+      </label>
+    </div>
+  );
+}
+
+function Chip({ active, onClick, children }: {
+  active: boolean; onClick: () => void; children: React.ReactNode;
+}) {
+  return (
+    <button onClick={onClick}
+            className={cn("rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                          active ? "border-accent/35 text-accent bg-accent/[0.07]"
+                                 : "border-white/10 text-white/40 hover:text-white")}>
+      {children}
+    </button>
+  );
+}
+
+/* -------------------------------------------------------- run history */
+
+function RunHistory({ workflowId }: { workflowId: string }) {
+  const [runs, setRuns] = useState<ApiWorkflowRun[] | null>(null);
+  const [health, setHealth] = useState<ApiWorkflowHealth | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getWorkflowRuns(workflowId, 20, controller.signal)
+      .then((r) => { setRuns(r.runs); setHealth(r.health); })
+      .catch((e) => { if (!isAbortError(e)) setUnavailable(true); });
+    return () => controller.abort();
+  }, [workflowId]);
+
+  if (unavailable || runs === null) return null; // silent until it has facts
+  if (runs.length === 0) return null;            // no history yet — nothing to say
+
+  const statusTone: Record<string, string> = {
+    completed: "bg-accent", failed: "bg-red-400", unverified: "bg-amber-300",
+    running: "bg-sky-300", queued: "bg-white/40", claimed: "bg-white/40",
+  };
+
+  return (
+    <section className="glass rounded-xl p-4" data-testid="workflow-health">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
+          <Activity size={12} /> Runs
+        </h2>
+        {health && health.total > 0 && (
+          <span className={cn("font-mono text-[11px] tabular-nums",
+                              (health.success_rate ?? 0) >= 0.9 ? "text-accent"
+                                : (health.success_rate ?? 0) >= 0.6 ? "text-amber-300" : "text-red-300")}>
+            {Math.round((health.success_rate ?? 0) * 100)}% success · {health.total} runs
+          </span>
+        )}
+      </div>
+      <div className="space-y-1">
+        {runs.slice(0, 8).map((run) => (
+          <Link key={run.id} href={`/dashboard/sessions/${run.id}`}
+                className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-white/[0.03] transition-colors">
+            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", statusTone[run.status] ?? "bg-white/40")} />
+            <span className="font-mono text-[11px] text-white/60">{run.status}</span>
+            {run.retry_of && (
+              <span className="rounded border border-white/15 px-1 font-mono text-[9px] uppercase tracking-wider text-white/40">
+                retry {run.retry_count ?? ""}
+              </span>
+            )}
+            {run.origin === "schedule" && !run.retry_of && (
+              <span className="rounded border border-white/15 px-1 font-mono text-[9px] uppercase tracking-wider text-white/40">
+                scheduled
+              </span>
+            )}
+            <span className="ml-auto font-mono text-[10px] text-white/30 tabular-nums shrink-0">
+              {new Date(run.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </Link>
+        ))}
+      </div>
+    </section>
   );
 }
 

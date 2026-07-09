@@ -41,6 +41,7 @@ class DispatchRequest(BaseModel):
     instruction: str
     workspace_id: Optional[str] = None
     workflow_id: Optional[str] = None
+    runner_id: Optional[str] = None  # pin to one runner; None = any eligible
 
 
 class EventsBatch(BaseModel):
@@ -110,7 +111,7 @@ async def dispatch_run(body: DispatchRequest,
     session = runner_svc.enqueue_session(
         db, user_id=current_user["sub"], org_id=org["id"],
         instruction=body.instruction, workspace_id=body.workspace_id,
-        workflow_id=body.workflow_id,
+        workflow_id=body.workflow_id, target_runner_id=body.runner_id,
     )
     return {"session_id": session["id"], "status": session["status"]}
 
@@ -198,6 +199,11 @@ async def report_execution_result(session_id: str, body: ResultReport,
             increment_usage(session["user_id"], session_id)
     except Exception:
         pass
+    if body.status == "failed":
+        # Honest terminal failure from the runtime — the plane's failure
+        # policy decides: bounded retry (scheduled runs, opt-in) or attention.
+        from failure_policy import apply_failure_policy
+        apply_failure_policy(db, {**session, "status": "failed", "error": body.error})
     return {"ok": True}
 
 
@@ -242,6 +248,17 @@ async def post_execution_approval_request(session_id: str, body: ApprovalRequest
     """The runtime raised a risk-gated approval; record it durably so the
     operator's decision can be matched back to it."""
     db = get_service_db()
-    _owned_session(db, session_id, runner)
+    session = _owned_session(db, session_id, runner)
     ctrl.set_approval_request(db, session_id, body.request)
+    if session.get("org_id"):
+        # Unattended-operations surface: an approval with nobody watching must
+        # reach a human. Deduped per session; auto-closed when decided.
+        from attention import raise_attention
+        raise_attention(
+            db, session["org_id"], kind="approval_pending", ref=str(session_id),
+            title="A run is waiting for approval",
+            detail={"summary": str((body.request or {}).get("summary", ""))[:300]},
+            workspace_id=session.get("workspace_id"),
+            workflow_id=session.get("workflow_id"),
+            session_id=str(session_id))
     return {"ok": True}

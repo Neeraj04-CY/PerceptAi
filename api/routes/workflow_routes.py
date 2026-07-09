@@ -177,6 +177,44 @@ async def publish_workflow(workflow_id: str, org_id: Optional[str] = None,
     return {"id": workflow_id, "version": version, "status": "published"}
 
 
+@router.get("/{workflow_id}/runs")
+async def workflow_runs(workflow_id: str, org_id: Optional[str] = None,
+                        limit: int = 50,
+                        current_user: dict = Depends(get_current_user)):
+    """Run history + health for one workflow — 'is this automation reliable?'
+    answered from the sessions the plane already persists. Sessions link back
+    via workflow_id (scheduled dispatch, remote dispatch and policy retries
+    all set it)."""
+    db = get_service_db()
+    resolved = _resolve_org(db, current_user, org_id, "view")
+    _get_workflow(db, workflow_id, resolved)
+    limit = max(1, min(200, limit))
+    try:
+        rows = db.table("sessions").select(
+            "id, status, origin, error, execution_time, created_at, "
+            "completed_at, retry_of, retry_count, runner_id").eq(
+            "workflow_id", workflow_id).order(
+            "created_at", desc=True).limit(limit).execute().data or []
+    except Exception as e:
+        if "workflow_id" in str(e).lower():
+            raise HTTPException(503, "run history unavailable — apply "
+                                     "api/migrations/004_operations.sql to this database")
+        raise
+    terminal = [r for r in rows if r.get("status") in
+                ("completed", "failed", "unverified")]
+    completed = sum(1 for r in terminal if r["status"] == "completed")
+    return {
+        "runs": rows,
+        "health": {
+            "total": len(terminal),
+            "completed": completed,
+            "failed": sum(1 for r in terminal if r["status"] == "failed"),
+            "unverified": sum(1 for r in terminal if r["status"] == "unverified"),
+            "success_rate": round(completed / len(terminal), 3) if terminal else None,
+        },
+    }
+
+
 @router.post("/{workflow_id}/render")
 async def render_workflow(workflow_id: str, body: WorkflowRenderRequest,
                           org_id: Optional[str] = None,

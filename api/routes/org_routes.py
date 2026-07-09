@@ -17,6 +17,7 @@ from models import (
     SecretCreateRequest,
     WorkspaceCreateRequest,
     WorkspaceUpdateRequest,
+    WorkspaceWebhookRequest,
 )
 from orgs import (
     ensure_personal_org,
@@ -93,6 +94,8 @@ async def org_detail(org_id: str,
         "org_id", org_id).execute().data or []
     workspaces = db.table("workspaces").select("*").eq(
         "org_id", org_id).order("created_at").execute().data or []
+    for ws in workspaces:  # the webhook signing secret is write-only, like vault values
+        ws.pop("notify_webhook_secret", None)
     return {
         **org,
         "role": role,
@@ -235,6 +238,33 @@ async def update_workspace(org_id: str, workspace_id: str,
                  workspace_id, {k: v for k, v in patch.items() if k != "updated_at"},
                  workspace_id=workspace_id)
     return updated[0] if updated else {**patch, "id": workspace_id}
+
+
+@router.put("/{org_id}/workspaces/{workspace_id}/webhook")
+async def set_workspace_webhook(org_id: str, workspace_id: str,
+                                body: WorkspaceWebhookRequest,
+                                current_user: dict = Depends(get_current_user)):
+    """Configure the workspace's Attention webhook. Setting a URL mints a
+    fresh HMAC signing secret returned ONCE (write-only afterwards — same
+    model as runner tokens); an empty URL clears both."""
+    db = get_service_db()
+    user_id, email = _actor(current_user)
+    require_permission(db, org_id, user_id, "workspaces.manage")
+    get_workspace(db, workspace_id, org_id)
+    url = (body.url or "").strip()
+    if url and not url.startswith("https://"):
+        raise HTTPException(400, "Webhook URL must be https://")
+    import secrets as _secrets
+    secret = f"whsec_{_secrets.token_urlsafe(32)}" if url else None
+    db.table("workspaces").update({
+        "notify_webhook_url": url or None,
+        "notify_webhook_secret": secret,
+        "updated_at": utc_now(),
+    }).eq("id", workspace_id).execute()
+    record_audit(db, org_id, user_id, email,
+                 "workspace.webhook_set" if url else "workspace.webhook_cleared",
+                 workspace_id, {"url": url or None}, workspace_id=workspace_id)
+    return {"url": url or None, "secret": secret}  # secret shown once, never again
 
 
 # --------------------------------------------------------------- secrets

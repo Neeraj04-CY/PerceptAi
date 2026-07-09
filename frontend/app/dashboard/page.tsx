@@ -11,6 +11,7 @@ import { motion } from "framer-motion";
 import {
   Activity,
   ArrowRight,
+  BellRing,
   CheckCircle2,
   FileText,
   PlayCircle,
@@ -23,14 +24,17 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import {
   ApiApproval,
+  ApiAttentionItem,
   ApiCapabilities,
   ApiMission,
   ApiTemplate,
   DashboardStats,
   OrgUsage,
   PlatformHealth,
+  ackAttention,
   decideApproval,
   getApprovals,
+  getAttention,
   getCapabilities,
   getDashboardStats,
   getMissions,
@@ -44,6 +48,7 @@ interface ControlData {
   stats: DashboardStats | null;
   missions: ApiMission[];
   approvals: ApiApproval[];
+  attention: ApiAttentionItem[];
   capabilities: ApiCapabilities | null;
   health: PlatformHealth | null;
   usage: OrgUsage | null;
@@ -57,11 +62,12 @@ export default function MissionControlPage() {
   const [unauthorized, setUnauthorized] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    const [stats, missions, approvals, capabilities, health, usage, templates] =
+    const [stats, missions, approvals, attention, capabilities, health, usage, templates] =
       await Promise.allSettled([
         getDashboardStats(signal),
         getMissions(10, signal),
         getApprovals("pending", signal),
+        getAttention("open", signal),
         getCapabilities(signal),
         getPlatformHealth(signal),
         getOrgs(signal).then((orgs) => (orgs[0] ? getOrgUsage(orgs[0].id, signal) : null)),
@@ -75,6 +81,7 @@ export default function MissionControlPage() {
       stats: settled(stats, null),
       missions: settled(missions, [] as ApiMission[]),
       approvals: settled(approvals, [] as ApiApproval[]),
+      attention: settled(attention, [] as ApiAttentionItem[]),
       capabilities: settled(capabilities, null),
       health: settled(health, null),
       usage: settled(usage, null),
@@ -98,7 +105,7 @@ export default function MissionControlPage() {
 
   if (loading || !data) return <ControlSkeleton />;
 
-  const { stats, missions, approvals, capabilities, health, usage, templates } = data;
+  const { stats, missions, approvals, attention, capabilities, health, usage, templates } = data;
   const runningMissions = missions.filter((m) => m.status === "running");
   const recentSessions = stats?.recent_sessions ?? [];
   const firstRun = recentSessions.length === 0 && missions.length === 0;
@@ -202,6 +209,7 @@ export default function MissionControlPage() {
 
           {/* right: control rail */}
           <div className="space-y-4">
+            <AttentionPanel items={attention} onAcked={() => load()} />
             <ApprovalsPanel approvals={approvals} onDecided={() => load()} />
             <UsagePanel usage={usage} stats={stats} />
             <SpecialistPanel capabilities={capabilities} />
@@ -305,6 +313,94 @@ function HealthStrip({ health }: { health: PlatformHealth | null }) {
         </span>
       ))}
     </div>
+  );
+}
+
+/** The unattended-operations inbox: everything that reached a human because
+ * nobody was watching — final failures, dead-letters, waiting approvals,
+ * schedules that cannot run. Ack removes it; an empty inbox renders nothing
+ * (silence means healthy, and the panel never nags). */
+function AttentionPanel({ items, onAcked }: {
+  items: ApiAttentionItem[]; onAcked: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  if (items.length === 0) return null;
+
+  const tone = (kind: ApiAttentionItem["kind"]) =>
+    kind === "run_failed" || kind === "dead_letter" ? "red" : "amber";
+  const ack = async (id: string) => {
+    setBusy(id);
+    try {
+      await ackAttention(id);
+      onAcked();
+    } catch {
+      // stays open; the refresh keeps it honest
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-amber-300/20 bg-amber-300/[0.03] p-4"
+             data-testid="attention-inbox">
+      <div className="mb-2 flex items-center gap-2">
+        <BellRing size={13} className="text-amber-300" />
+        <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-amber-300/90">
+          Needs attention
+        </h2>
+        <span className="ml-auto font-mono text-[10px] text-white/35 tabular-nums">
+          {items.length} open
+        </span>
+      </div>
+      <div className="space-y-2">
+        {items.slice(0, 5).map((item) => {
+          const detailText = String(
+            item.detail?.error ?? item.detail?.reason ?? item.detail?.warning ??
+            item.detail?.summary ?? "");
+          const href = item.session_id
+            ? `/dashboard/sessions/${item.session_id}`
+            : item.workflow_id ? `/dashboard/studio/${item.workflow_id}` : null;
+          return (
+            <div key={item.id}
+                 className={cn("rounded-lg border px-3 py-2",
+                               tone(item.kind) === "red"
+                                 ? "border-red-400/15 bg-red-400/[0.04]"
+                                 : "border-amber-300/15 bg-amber-300/[0.04]")}>
+              <div className="flex items-center justify-between gap-2">
+                <span className={cn("font-mono text-[9px] uppercase tracking-wider",
+                                    tone(item.kind) === "red" ? "text-red-300" : "text-amber-300")}>
+                  {item.kind.replace(/_/g, " ")}
+                </span>
+                <span className="font-mono text-[9px] text-white/30 shrink-0">
+                  {timeAgo(item.created_at)}
+                </span>
+              </div>
+              <p className="mt-1 text-[12px] text-white/75 leading-snug">{item.title}</p>
+              {detailText && (
+                <p className="mt-0.5 text-[11px] text-white/40 line-clamp-2">{detailText}</p>
+              )}
+              <div className="mt-1.5 flex items-center gap-2">
+                {href && (
+                  <Link href={href}
+                        className="font-mono text-[10px] uppercase tracking-wider text-white/50 hover:text-accent transition-colors">
+                    Inspect
+                  </Link>
+                )}
+                <button onClick={() => ack(item.id)} disabled={busy === item.id}
+                        className="ml-auto rounded-md bg-white/[0.04] px-2.5 h-6 font-mono text-[10px] uppercase tracking-wider text-white/50 hover:text-white hover:bg-white/[0.08] transition-colors disabled:opacity-50">
+                  Ack
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {items.length > 5 && (
+          <p className="font-mono text-[10px] text-white/30">
+            +{items.length - 5} more open item{items.length - 5 === 1 ? "" : "s"}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

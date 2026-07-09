@@ -149,6 +149,19 @@ async def decide_approval(session_id: str, request_id: str, body: ApprovalReques
 
     _audit(session, f"execution.approval.{decision}",
            {"request_id": request_id, "reason": body.reason})
+    # The wait is over — close the matching Attention item so the inbox only
+    # ever shows things that still need a human.
+    try:
+        if session.get("org_id"):
+            from attention import ack_attention
+            db = get_service_db()
+            rows = db.table("attention_items").select("id").eq(
+                "org_id", session["org_id"]).eq("kind", "approval_pending").eq(
+                "ref", str(session_id)).eq("status", "open").limit(1).execute().data or []
+            if rows:
+                ack_attention(db, session["org_id"], rows[0]["id"], decided_by)
+    except Exception:
+        pass
     return {"ok": True, "decision": decision}
 
 
