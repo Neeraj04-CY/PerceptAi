@@ -89,7 +89,7 @@ class Workforce:
         engine = self.config.engine
 
         self.events = events or EventBus()
-        self.llm = llm or LLMClient(engine.groq_api_key)
+        self.llm = llm or LLMClient(engine)
         self.memory = memory or MemoryStore(engine.memory_db_path)
         self.experience = experience or ExperienceStore(engine.memory_db_path)
         self.policy = policy or MissionPolicy()

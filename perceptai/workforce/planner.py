@@ -75,8 +75,7 @@ Rules:
 Return ONLY the JSON array."""
 
         try:
-            parsed, _raw = self._llm.complete_json(
-                prompt, self._config.model, max_tokens=1200)
+            parsed, _raw = self._llm.complete_json(prompt, "plan", max_tokens=1200)
         except Exception:
             return None
         return parsed if isinstance(parsed, list) else None

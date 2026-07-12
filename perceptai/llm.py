@@ -1,13 +1,62 @@
-"""Single LLM access point for the engine.
+"""Model Orchestration — the ONE model access point for the engine.
 
-All Groq calls, JSON fence-stripping and permissive parsing live here —
-in exactly one place. A malformed model reply degrades to (None, raw),
-never to an exception in the execution path.
+WHY THIS EXISTS (Chapter XV). A screen-automation agent is only as capable as
+the model that plans and grounds its actions. The engine was capped at a single
+open 70B model; competitors' whole ceiling IS their frontier model. This layer
+uncaps and orchestrates the brain:
+
+  * PROVIDER-AGNOSTIC. Anthropic (Claude), Groq, and any future provider sit
+    behind one `ModelProvider` interface. An enterprise runs the platform with
+    THEIR sanctioned model (Bedrock Claude, Azure OpenAI) — something Operator
+    and Copilot Studio cannot offer.
+  * ROLE-ROUTED. Each cognitive task is a ROLE (plan / ground / heal / verify /
+    judge / extract / report / perceive). Hard reasoning and grounding route to
+    the frontier model; mechanical extraction routes to a fast one. One 70B for
+    everything was leaving both capability and cost on the table.
+  * FRONTIER-FIRST, DEGRADE-SAFE. When an Anthropic key is present the reasoning
+    and vision roles use Claude; otherwise the layer behaves EXACTLY as before
+    (Groq). A provider failure falls back to the fast provider. A malformed
+    reply degrades to (None, raw) — never an exception in the execution path.
+
+Still the single data-egress checkpoint (Chapter IX): every outbound prompt and
+screenshot passes the injected `EgressGuard` before it can reach any provider.
+There is nowhere else to call a model from.
 """
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any, Optional, Protocol
+
+from .egress import NULL_GUARD, EgressGuard
+
+# ------------------------------------------------------------------- roles
+# A role is WHAT the model is being asked to do, not WHICH model does it.
+PLAN = "plan"          # decide the next steps from the live screen (hard)
+GROUND = "ground"      # locate an element (hard, vision-heavy)
+HEAL = "heal"          # diagnose a failure and propose recovery (hard)
+VERIFY = "verify"      # judge whether the outcome was achieved (hard)
+GOAL = "goal"          # turn the instruction into a GoalSpec (hard)
+JUDGE = "judge"        # workforce/mission-level judgement (hard)
+CRITIC = "critic"      # attack the plan before it runs (hard, adversarial)
+EXTRACT = "extract"    # pull typed values out of observed text (mechanical)
+REPORT = "report"      # compose the narrative from evidence (mechanical)
+PERCEIVE = "perceive"  # vision understanding of a screenshot (vision)
+
+# Which roles want the frontier reasoner, the fast model, or the vision model.
+_REASON_ROLES = frozenset({PLAN, GROUND, HEAL, VERIFY, GOAL, JUDGE, CRITIC})
+_FAST_ROLES = frozenset({EXTRACT, REPORT})
+_VISION_ROLES = frozenset({PERCEIVE})
+
+REASON, FAST, VISION = "reason", "fast", "vision"
+
+
+def _tier(role: str) -> str:
+    if role in _VISION_ROLES:
+        return VISION
+    if role in _FAST_ROLES:
+        return FAST
+    return REASON  # unknown roles get the capable model — never silently cheap
 
 
 def parse_json_reply(raw: str) -> Optional[Any]:
@@ -18,47 +67,238 @@ def parse_json_reply(raw: str) -> Optional[Any]:
         return None
 
 
-class LLMClient:
+@dataclass(frozen=True)
+class ModelSpec:
+    provider: str        # "anthropic" | "groq"
+    model: str
+    max_tokens: int
+
+
+# ============================================================== providers
+
+class ModelProvider(Protocol):
+    name: str
+    def available(self) -> bool: ...
+    def complete_text(self, prompt: str, model: str, max_tokens: int) -> str: ...
+    def complete_vision(self, image_b64: str, prompt: str, model: str, max_tokens: int) -> str: ...
+
+
+class GroqProvider:
+    """The original path — unchanged behavior, kept as the universal fallback."""
+    name = "groq"
+
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._client = None
-        self.calls = 0
 
-    def _get_client(self):
+    def available(self) -> bool:
+        return bool(self._api_key)
+
+    def _c(self):
         if self._client is None:
-            from groq import Groq  # lazy: keeps the package importable without groq installed
+            from groq import Groq  # lazy
             self._client = Groq(api_key=self._api_key)
         return self._client
 
-    def complete_text(self, prompt: str, model: str, max_tokens: int = 800) -> str:
-        self.calls += 1
-        response = self._get_client().chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content.strip()
+    def complete_text(self, prompt: str, model: str, max_tokens: int) -> str:
+        r = self._c().chat.completions.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}])
+        return r.choices[0].message.content.strip()
 
-    def complete_json(self, prompt: str, model: str, max_tokens: int = 800) -> tuple[Optional[Any], str]:
-        raw = self.complete_text(prompt, model, max_tokens)
+    def complete_vision(self, image_b64: str, prompt: str, model: str, max_tokens: int) -> str:
+        r = self._c().chat.completions.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                {"type": "text", "text": prompt}]}])
+        return r.choices[0].message.content.strip()
+
+
+class AnthropicProvider:
+    """Claude — the frontier planner/grounder. Strong at reading messy real
+    enterprise screens and at coordinate/element grounding, which is exactly
+    where a 70B open model runs out of road."""
+    name = "anthropic"
+
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+        self._client = None
+
+    def available(self) -> bool:
+        if not self._api_key:
+            return False
+        try:
+            import importlib.util
+            return importlib.util.find_spec("anthropic") is not None
+        except Exception:
+            return False
+
+    def _c(self):
+        if self._client is None:
+            import anthropic  # lazy
+            self._client = anthropic.Anthropic(api_key=self._api_key)
+        return self._client
+
+    def complete_text(self, prompt: str, model: str, max_tokens: int) -> str:
+        r = self._c().messages.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}])
+        return _anthropic_text(r)
+
+    def complete_vision(self, image_b64: str, prompt: str, model: str, max_tokens: int) -> str:
+        r = self._c().messages.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/png", "data": image_b64}},
+                {"type": "text", "text": prompt}]}])
+        return _anthropic_text(r)
+
+
+def _anthropic_text(response: Any) -> str:
+    """Extract text from a Claude messages response, defensively."""
+    try:
+        parts = [b.text for b in response.content if getattr(b, "type", "") == "text"]
+        return "".join(parts).strip()
+    except Exception:
+        return ""
+
+
+# ================================================================ router
+
+class LLMClient:
+    """The router. Accepts an EngineConfig (or, for back-compat, a bare Groq
+    api-key string). Chooses provider + model per ROLE, gates every send at the
+    egress checkpoint, and never raises into the execution path."""
+
+    def __init__(self, config: Any = None, egress: Optional[EgressGuard] = None,
+                 api_key: Optional[str] = None):
+        # Back-compat: `LLMClient("groq-key")` still works.
+        if isinstance(config, str):
+            api_key, config = config, None
+        self._config = config
+        self.egress: EgressGuard = egress or NULL_GUARD
+        self.calls = 0
+
+        groq_key = api_key if api_key is not None else _cfg(config, "groq_api_key", "")
+        anthropic_key = _cfg(config, "anthropic_api_key", "")
+        self._providers: dict[str, ModelProvider] = {
+            "groq": GroqProvider(groq_key),
+            "anthropic": AnthropicProvider(anthropic_key),
+        }
+        self._routing = _build_routing(config, self._providers)
+
+    # ------------------------------------------------------------ routing
+    def spec_for(self, role: str) -> ModelSpec:
+        return self._routing.get(_tier(role), self._routing[FAST])
+
+    def model_for(self, role: str) -> str:
+        """The model that WILL handle this role — for the event stream and
+        PlannerOutput, so the record shows which brain actually ran."""
+        return self.spec_for(role).model
+
+    def provider_for(self, role: str) -> str:
+        return self.spec_for(role).provider
+
+    def _run(self, spec: ModelSpec, fn) -> str:
+        """Call `fn(provider, model)` on the chosen provider; on failure or
+        unavailability, degrade to the fast provider, then to nothing. Never
+        raises — a dead model must not take down a run."""
+        order = [spec.provider]
+        fallback = self._routing[FAST].provider
+        if fallback != spec.provider:
+            order.append(fallback)
+        if "groq" not in order:
+            order.append("groq")
+        for name in order:
+            provider = self._providers.get(name)
+            if provider is None or not _safe_available(provider):
+                continue
+            model = spec.model if name == spec.provider else self._routing[FAST].model
+            try:
+                self.calls += 1
+                return fn(provider, model)
+            except Exception:
+                continue  # try the next provider
+        return ""  # everything failed — degrade honestly
+
+    # ----------------------------------------------------------- completions
+    def complete_text(self, prompt: str, role: str = PLAN, *,
+                      model: Optional[str] = None, max_tokens: Optional[int] = None,
+                      purpose: Optional[str] = None) -> str:
+        spec = self._override(self.spec_for(role), model, max_tokens)
+        # Egress gate BEFORE any provider is touched: a denied prompt never
+        # leaves, a redacted one is what actually goes.
+        prompt, _ = self.egress.text(prompt, model=spec.model, purpose=purpose or role)
+        return self._run(spec, lambda p, m: p.complete_text(prompt, m, spec.max_tokens))
+
+    def complete_json(self, prompt: str, role: str = PLAN, *,
+                      model: Optional[str] = None, max_tokens: Optional[int] = None,
+                      purpose: Optional[str] = None) -> tuple[Optional[Any], str]:
+        raw = self.complete_text(prompt, role, model=model, max_tokens=max_tokens, purpose=purpose)
         return parse_json_reply(raw), raw
 
-    def complete_vision_json(
-        self, image_b64: str, prompt: str, model: str, max_tokens: int = 1500
-    ) -> tuple[Optional[Any], str]:
-        self.calls += 1
-        response = self._get_client().chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-            max_tokens=max_tokens,
-        )
-        raw = response.choices[0].message.content.strip()
+    def complete_vision_json(self, image_b64: str, prompt: str, role: str = PERCEIVE, *,
+                             model: Optional[str] = None, max_tokens: Optional[int] = None,
+                             purpose: Optional[str] = None) -> tuple[Optional[Any], str]:
+        """Screenshots are the crown-jewel exposure. When egress policy forbids
+        pixels this degrades to "no observation" — the local providers (UIA,
+        OCR, DOM) carry the run and pixels stay the perception floor on-machine."""
+        spec = self._override(self.spec_for(role), model, max_tokens)
+        decision = self.egress.pixels(model=spec.model, purpose=purpose or role,
+                                      size=len(image_b64 or ""))
+        if not decision.allowed:
+            return None, ""
+        prompt, _ = self.egress.text(prompt, model=spec.model, purpose=purpose or role)
+        raw = self._run(spec, lambda p, m: p.complete_vision(image_b64, prompt, m, spec.max_tokens))
         return parse_json_reply(raw), raw
+
+    @staticmethod
+    def _override(spec: ModelSpec, model: Optional[str], max_tokens: Optional[int]) -> ModelSpec:
+        if model is None and max_tokens is None:
+            return spec
+        return ModelSpec(provider=spec.provider, model=model or spec.model,
+                         max_tokens=max_tokens or spec.max_tokens)
+
+
+# --------------------------------------------------------------- helpers
+
+def _cfg(config: Any, attr: str, default: Any) -> Any:
+    return getattr(config, attr, default) if config is not None else default
+
+
+def _safe_available(provider: ModelProvider) -> bool:
+    try:
+        return provider.available()
+    except Exception:
+        return False
+
+
+def _build_routing(config: Any, providers: dict[str, ModelProvider]) -> dict[str, ModelSpec]:
+    """The routing table: tier -> ModelSpec. Frontier-first when Anthropic is
+    usable, else the exact Groq path the engine has always used."""
+    override = str(_cfg(config, "model_provider", "auto") or "auto").lower()
+    anthropic_ok = _safe_available(providers["anthropic"]) and override in ("auto", "anthropic")
+    groq_ok = _safe_available(providers["groq"])
+
+    # Groq model names (the legacy path / fallback).
+    groq_reason = _cfg(config, "planner_model", "llama-3.3-70b-versatile")
+    groq_vision = _cfg(config, "vision_model", "meta-llama/llama-4-scout-17b-16e-instruct")
+
+    if anthropic_ok:
+        reason_model = _cfg(config, "anthropic_reason_model", "claude-sonnet-5")
+        fast_model = _cfg(config, "anthropic_fast_model", "claude-haiku-4-5-20251001")
+        vision_model = _cfg(config, "anthropic_vision_model", "claude-sonnet-5")
+        return {
+            REASON: ModelSpec("anthropic", reason_model, 1200),
+            FAST: ModelSpec("anthropic", fast_model, 800),
+            VISION: ModelSpec("anthropic", vision_model, 1500),
+        }
+    # No frontier model configured — behave exactly as before.
+    _ = groq_ok
+    return {
+        REASON: ModelSpec("groq", groq_reason, 800),
+        FAST: ModelSpec("groq", groq_reason, 800),
+        VISION: ModelSpec("groq", groq_vision, 1500),
+    }

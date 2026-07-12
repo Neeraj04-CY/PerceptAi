@@ -20,6 +20,12 @@ class Planner:
         self._config = config
         self._llm = llm
 
+    def _plan_model(self) -> str:
+        """The model that produced this plan, for the record. Any injected
+        LLM without a router (test stubs) falls back to the config label."""
+        fn = getattr(self._llm, "model_for", None)
+        return fn("plan") if callable(fn) else self._config.planner_model
+
     def plan(
         self,
         instruction: str,
@@ -31,6 +37,7 @@ class Planner:
         known_facts: dict[str, str] | None = None,
         strategy: StrategyProfile | None = None,
         available_secrets: list[str] | None = None,
+        critique_feedback: str | None = None,
     ) -> PlannerOutput:
         now = datetime.now()
         completed_summary = "\n".join(
@@ -116,14 +123,19 @@ Return ONLY a valid JSON array:
 
 Return ONLY the JSON array. No markdown. No explanation."""
 
-        parsed, raw = self._llm.complete_json(prompt, self._config.planner_model)
+        if critique_feedback:
+            # The critic rejected the last plan. Two cognitive roles now
+            # converge: the planner must ANSWER the objection, not repeat it.
+            prompt = prompt + "\n\n" + critique_feedback
+
+        parsed, raw = self._llm.complete_json(prompt, "plan")
         if not isinstance(parsed, list):
             return PlannerOutput(ok=False, error="Planner returned no valid step list", raw=raw,
-                                 model=self._config.planner_model)
+                                 model=self._plan_model())
 
         if len(parsed) == 0:
             # Deliberate planner signal: the goal is already achieved.
-            return PlannerOutput(steps=[], ok=True, raw=raw, model=self._config.planner_model)
+            return PlannerOutput(steps=[], ok=True, raw=raw, model=self._plan_model())
 
         steps: list[Step] = []
         dropped = 0
@@ -139,5 +151,5 @@ Return ONLY the JSON array. No markdown. No explanation."""
 
         if not steps:
             return PlannerOutput(ok=False, error="Planner produced no executable steps", raw=raw,
-                                 dropped=dropped, model=self._config.planner_model)
-        return PlannerOutput(steps=steps, raw=raw, dropped=dropped, model=self._config.planner_model)
+                                 dropped=dropped, model=self._plan_model())
+        return PlannerOutput(steps=steps, raw=raw, dropped=dropped, model=self._plan_model())

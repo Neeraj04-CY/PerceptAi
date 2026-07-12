@@ -21,10 +21,20 @@ def _default_memory_db() -> Path:
 @dataclass
 class EngineConfig:
     groq_api_key: str = ""
+    anthropic_api_key: str = ""   # frontier brain (Claude); when set, it leads
 
-    # Models
+    # Model orchestration (Chapter XV). Roles route to a tier; a tier maps to a
+    # provider+model. Frontier-first when an Anthropic key is present, else the
+    # exact Groq path the engine has always used — zero regression.
+    model_provider: str = "auto"  # auto | anthropic | groq
+    # Groq path (legacy / universal fallback)
     planner_model: str = "llama-3.3-70b-versatile"
     vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    # Frontier path — the most capable models handle hard reasoning + grounding;
+    # a fast model handles mechanical extraction. Overridable for bring-your-own.
+    anthropic_reason_model: str = "claude-sonnet-5"
+    anthropic_fast_model: str = "claude-haiku-4-5-20251001"
+    anthropic_vision_model: str = "claude-sonnet-5"
 
     # Budgets — every agentic loop is bounded
     max_steps: int = 12
@@ -33,6 +43,15 @@ class EngineConfig:
     max_replans: int = 4
     find_retries: int = 3
     healing_confidence_threshold: float = 0.5
+
+    # The Plan Critic (Chapter XVI) — verification BEFORE action.
+    critic_enabled: bool = True
+    critic_min_score: float = 0.6         # below this, the plan is rejected
+    critic_ambiguity_margin: float = 0.15  # top-2 match gap under this = AMBIGUOUS
+    critic_weak_grounding: float = 0.75    # best match under this is weak
+    critic_max_revisions: int = 2          # planner<->critic convergence budget
+    critic_llm_enabled: bool = True        # adversarial pass, escalated only when it pays
+    critic_escalate_below: float = 0.85    # ...or when a high-risk step is present
 
     # Reasoning — budgets for the decision loop and the thresholds that
     # turn uncertainty into behavior (observe more, verify more, escalate).
@@ -123,4 +142,11 @@ class EngineConfig:
             load_dotenv()
         except ImportError:
             pass
-        return cls(groq_api_key=os.getenv("GROQ_API_KEY", ""), **overrides)
+        env = {
+            "groq_api_key": os.getenv("GROQ_API_KEY", ""),
+            "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+        }
+        if os.getenv("MODEL_PROVIDER"):
+            env["model_provider"] = os.getenv("MODEL_PROVIDER", "auto")
+        env.update(overrides)
+        return cls(**env)

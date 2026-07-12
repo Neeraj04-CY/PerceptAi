@@ -10,3 +10,4 @@ numpy
 psutil
 websocket-client
 uiautomation; sys_platform == "win32"
+anthropic>=0.40

@@ -45,7 +45,7 @@ Rules:
 Return ONLY the JSON array."""
 
         try:
-            parsed, _raw = self._llm.complete_json(prompt, self._config.planner_model, max_tokens=600)
+            parsed, _raw = self._llm.complete_json(prompt, "extract", max_tokens=600)
         except Exception:
             return []
 

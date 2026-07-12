@@ -15,8 +15,10 @@ from typing import Optional, Union
 from .actions import ActionExecutor
 from .config import EngineConfig
 from .constraints import ConstraintManager
-from .contracts import Task, TaskResult
+from .contracts import Task, TaskResult, TaskStatus
+from .critic import PlanCritic
 from .control import ControlChannel
+from .egress import TEXT, EgressGuard
 from .events import EventBus, EventType
 from .risk import RiskAssessor
 from .secrets import NullSecretResolver, SecretResolver
@@ -61,14 +63,20 @@ class AgentSession:
         constraints: Optional[ConstraintManager] = None,
         control: Optional[ControlChannel] = None,
         risk: Optional[RiskAssessor] = None,
+        critic: Optional[PlanCritic] = None,
         secrets: Optional[SecretResolver] = None,
+        egress: Optional[EgressGuard] = None,
     ):
         self.config = config or EngineConfig.from_env()
         self.id = str(uuid.uuid4())
         self.workspace = self.config.workspace_root / self.id[:8]
 
         self.events = events or EventBus()
-        self.llm = llm or LLMClient(self.config.groq_api_key)
+        # Data-egress policy: injected, workspace-owned, enforced at the ONE
+        # LLM checkpoint. Defaults to allow-all so local dev and tests are
+        # unchanged; the API/runner inject the workspace's policy.
+        self.egress = egress or EgressGuard()
+        self.llm = llm or LLMClient(self.config, egress=self.egress)
         self.windows = windows or WindowManager()
         self.perception = perception or PerceptionService(self.config, self.llm, self.workspace)
         self.apps = apps or AppLauncher(self.config, self.windows)
@@ -102,9 +110,18 @@ class AgentSession:
         # go wrong" signal read before every input action.
         self.control = control or ControlChannel()
         self.risk = risk or RiskAssessor(self.config)
+        # The Plan Critic (Chapter XVI): an adversarial second role that
+        # attacks each plan BEFORE it runs. Verification moves ahead of the
+        # action, so a wrong click is prevented rather than detected.
+        self.critic = critic or PlanCritic(
+            self.config, llm=self.llm, risk=self.risk, world=self.world)
         # Secret resolution is out-of-band and per-run: the default resolves
         # nothing; the API/runner inject a workspace-scoped, zeroizing resolver.
         self.secrets = secrets or NullSecretResolver()
+        # An injected LLM (tests, fakes) must still honor workspace egress
+        # policy — the checkpoint belongs to the session, not to one client.
+        if egress is not None and hasattr(self.llm, "egress"):
+            self.llm.egress = self.egress
 
     def emit(self, type: EventType, task: Task, **payload) -> None:
         self.events.emit(type, session_id=self.id, task_id=task.id, **payload)
@@ -115,6 +132,20 @@ class AgentSession:
 
         if isinstance(task, str):
             task = Task(instruction=task)
+
+        # Egress policy 'deny' means no observation may reach any model, and
+        # the engine plans from observations. Refuse UP FRONT with a named
+        # reason rather than contacting a model, half-executing, and failing
+        # obscurely. The platform never pretends work can proceed when it cannot.
+        if not self.egress.allows_text:
+            return TaskResult(
+                task_id=task.id, instruction=task.instruction,
+                status=TaskStatus.FAILED,
+                summary="Refused before execution: workspace data-egress policy "
+                        "denies sending screen observations to any model.",
+                errors=[self.egress.policy.reason(TEXT)],
+                confidence=1.0,
+            )
         try:
             return ExecutionEngine(self).run(task)
         finally:

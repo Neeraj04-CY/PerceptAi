@@ -120,7 +120,7 @@ class FakePlanner:
 
     def plan(self, instruction, screen_text, completed, open_windows=None,
              source="planner", goal=None, known_facts=None, strategy=None,
-             available_secrets=None):
+             available_secrets=None, critique_feedback=None):
         self.plan_calls += 1
         if strategy is not None:
             self.strategies_seen.append(strategy.name)

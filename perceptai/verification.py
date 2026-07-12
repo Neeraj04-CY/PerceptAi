@@ -228,7 +228,7 @@ Rules:
 Return ONLY the JSON array."""
 
         try:
-            parsed, _raw = self._llm.complete_json(prompt, self._config.planner_model, max_tokens=500)
+            parsed, _raw = self._llm.complete_json(prompt, "verify", max_tokens=500)
         except Exception as e:
             return [VerificationCheck(name="criteria_judge", passed=False, critical=False,
                                       detail=f"judge unavailable: {e}")]

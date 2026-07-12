@@ -65,7 +65,7 @@ Rules:
 - Confidence values are independent (they need not sum to 1).
 Return ONLY JSON. No explanation."""
 
-        parsed, _raw = self._llm.complete_json(prompt, self._config.planner_model)
+        parsed, _raw = self._llm.complete_json(prompt, "heal")
         if not isinstance(parsed, dict):
             return HealingPlan(diagnosis="Unknown failure", failure_type="other")
 

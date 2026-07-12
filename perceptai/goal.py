@@ -44,7 +44,7 @@ Rules:
 Return ONLY JSON."""
 
         try:
-            parsed, _raw = self._llm.complete_json(prompt, self._config.planner_model, max_tokens=600)
+            parsed, _raw = self._llm.complete_json(prompt, "goal", max_tokens=600)
         except Exception:
             parsed = None
 

@@ -474,7 +474,16 @@ class VisionProvider(PerceptionProvider):
         self._llm = llm
 
     def available(self) -> bool:
-        return self._llm is not None
+        """Data minimization (Chapter IX): when workspace policy forbids pixel
+        egress, this provider is simply not available — the screenshot is never
+        read, never base64-encoded, never held in memory on its way out. The
+        run continues on the local providers; pixels remain the perception
+        floor, on this machine. The llm.py checkpoint enforces the same policy
+        independently, so this is minimization, not the gate."""
+        if self._llm is None:
+            return False
+        guard = getattr(self._llm, "egress", None)
+        return guard is None or guard.allows_pixels
 
     def observe(self, frame: FrameContext) -> list[Observation]:
         if not frame.screenshot_path:
@@ -492,9 +501,7 @@ class VisionProvider(PerceptionProvider):
             ' "primary_action": "main thing user can do here"}\n'
             "IMPORTANT: Use exact visible text. Return ONLY JSON."
         )
-        parsed, _raw = self._llm.complete_vision_json(
-            image_b64, prompt, self._config.vision_model
-        )
+        parsed, _raw = self._llm.complete_vision_json(image_b64, prompt, "perceive")
         if not isinstance(parsed, dict):
             return []
 
