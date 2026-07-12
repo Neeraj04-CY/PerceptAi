@@ -12,10 +12,11 @@ from perceptai.verification import Verifier
 from tests.conftest import FakeWindows
 
 
-def _ok(action, **params):
+def _ok(action, data=None, **params):
     return StepResult(
         step=Step(action=ActionType(action), params=params),
         status=StepStatus.COMPLETED,
+        data=data or {},
     )
 
 
@@ -23,7 +24,8 @@ def test_opened_app_window_must_exist():
     verifier = Verifier(FakeWindows(["Untitled - notepad"]))
     result = verifier.verify(TaskContext("open notepad"), [_ok("open_app", app="notepad")])
     assert result.verified
-    assert result.confidence == 1.0
+    # Confidence is calibrated evidence, never absolute certainty.
+    assert 0.85 <= result.confidence < 1.0
 
 
 def test_missing_window_fails_verification():
@@ -166,3 +168,77 @@ def test_world_checks_skipped_without_snapshots_or_actions():
     result = verifier.verify(TaskContext("wait"), [_ok("wait", wait=1.0)],
                              world_before=_world_state(), world_after=_world_state())
     assert all(c.name != "world_changed" for c in result.checks)
+
+
+# --------------------------------------------------- grounded-action evidence
+
+def _grounded_click(element="Submit Order", confidence=0.9, sources=("ocr", "uia")):
+    return _ok(
+        "click",
+        find=element,
+        app="shop",
+        data={"element": element, "role": "button",
+              "confidence": confidence, "sources": list(sources)},
+    )
+
+
+def test_grounded_click_verifies_click_only_task():
+    """A click grounded through the fused world model is positive evidence:
+    a click-only task must not land UNVERIFIED at confidence 0.0."""
+    verifier = Verifier(FakeWindows(["shop - window"]))
+    result = verifier.verify(TaskContext("submit the order"), [_grounded_click()])
+    grounded = [c for c in result.checks if c.name.startswith("action_grounded:")]
+    assert grounded and grounded[0].passed and not grounded[0].critical
+    assert result.verified
+    assert 0.5 <= result.confidence < 1.0
+
+
+def test_grounded_click_with_unchanged_world_discounts_but_verifies():
+    """'No visible change' is a contradiction observation, not proof of
+    failure: confidence is dented, the verdict holds."""
+    verifier = Verifier(FakeWindows(["shop - window"]))
+    same = _world_state(windows=("shop - window",), focused="shop - window",
+                        elements=("Submit Order", "Cancel"))
+    result = verifier.verify(TaskContext("submit the order"), [_grounded_click()],
+                             world_before=same, world_after=same)
+    world_check = next(c for c in result.checks if c.name == "world_changed")
+    assert not world_check.passed
+    assert result.verified
+    grounded_only = verifier.verify(TaskContext("submit the order"), [_grounded_click()])
+    assert result.confidence < grounded_only.confidence  # discount is visible
+
+
+def test_weak_grounding_stays_unverified_but_not_zero():
+    """Weak perception never inflates certainty — and honest positive
+    evidence is never reported as zero confidence."""
+    verifier = Verifier(FakeWindows(["shop - window"]))
+    result = verifier.verify(
+        TaskContext("submit"), [_grounded_click(confidence=0.3)])
+    assert not result.verified
+    assert 0.0 < result.confidence < 0.5
+
+
+def test_failed_critical_check_crushes_grounded_confidence():
+    """Grounding corroborates; it never overrides a failed critical check."""
+    verifier = Verifier(FakeWindows([]))  # opened app has no window: critical fail
+    steps = [_ok("open_app", app="phantom"), _grounded_click()]
+    result = verifier.verify(TaskContext("open phantom and click"), steps)
+    assert not result.verified
+    assert result.confidence < 0.2
+
+
+def test_confidence_is_never_certainty():
+    """Many independent confirmations compound, but never reach 1.0."""
+    verifier = Verifier(FakeWindows(["shop - window"]))
+    steps = [_ok("open_app", app="shop")] + [
+        _grounded_click(element=f"Button {i}", confidence=0.95) for i in range(5)
+    ]
+    result = verifier.verify(TaskContext("do many things"), steps)
+    assert result.verified
+    assert result.confidence <= 0.99
+
+
+def test_ungrounded_click_contributes_no_grounded_check():
+    verifier = Verifier(FakeWindows([]))
+    result = verifier.verify(TaskContext("click"), [_ok("click", find="Submit")])
+    assert all(not c.name.startswith("action_grounded:") for c in result.checks)

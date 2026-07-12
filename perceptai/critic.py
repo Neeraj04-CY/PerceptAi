@@ -137,7 +137,7 @@ class PlanCritic:
             # --- missing context
             app = str(step.params.get("app", "") or step.params.get("window", "")).strip()
             if app and step.action not in (ActionType.OPEN_APP, ActionType.NAVIGATE_URL):
-                if app.lower() not in opened:
+                if not self._app_open(app, opened):
                     self._flag(critique, sc, "missing_context", MEDIUM, i,
                                f"step {i + 1} targets '{app}', which is not open and is "
                                f"not opened by an earlier step in this plan")
@@ -348,6 +348,16 @@ class PlanCritic:
         if world is None:
             return set()
         return {w.title.lower() for w in world.windows if w.title}
+
+    @staticmethod
+    def _app_open(app: str, opened: set[str]) -> bool:
+        """Substring containment either way, matching how the rest of the
+        engine resolves windows: the planner's 'salesforce' must match the
+        window 'Salesforce Login'. missing_context is an advisory dampener —
+        a false positive here rejects a valid plan, a false negative is
+        caught by find-retry and recovery."""
+        needle = app.lower()
+        return any(needle in title or title in needle for title in opened)
 
     @staticmethod
     def _apps_opened_by(steps: list[Step]) -> set[str]:

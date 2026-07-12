@@ -166,3 +166,30 @@ def test_rejection_produces_actionable_feedback_for_the_planner():
     assert not critique.accepted
     fb = critique.feedback()
     assert "REJECTED" in fb and "exact full label" in fb   # tells the planner how to fix it
+
+
+# ============================================== missing_context matching
+
+def test_partial_window_title_is_not_missing_context():
+    """Regression: the planner says 'salesforce', the OS window is
+    'Salesforce Login'. Window matching is substring everywhere else in
+    the engine — the critic must not reject a plan that targets the very
+    screen it was planned against."""
+    world = _world(["Password", "Log In"], windows=("Salesforce Login",))
+    steps = [
+        Step(action=ActionType.CLICK, description="focus the password field",
+             params={"find": "Password", "app": "salesforce"}),
+        Step(action=ActionType.TYPE, description="enter the password",
+             params={"text": "{{secret:SF_PW}}", "app": "salesforce"}),
+    ]
+    critique = _critic().critique(steps, world)
+    assert not any(f.kind == "missing_context" for f in critique.findings)
+    assert critique.accepted
+
+
+def test_truly_absent_app_is_still_flagged_as_missing_context():
+    world = _world(["Home"], windows=("Notepad",))
+    steps = [Step(action=ActionType.CLICK, description="click save",
+                  params={"find": "Save", "app": "quickbooks"})]
+    critique = _critic().critique(steps, world)
+    assert any(f.kind == "missing_context" for f in critique.findings)

@@ -614,6 +614,11 @@ class VerificationCheck:
     passed: bool
     critical: bool = True
     detail: str = ""
+    # How much this check alone says about the outcome (0..1). Measured
+    # where possible (grounded actions carry their fusion confidence),
+    # fixed source-weight otherwise. Consumed by the verifier's noisy-OR
+    # confidence; the verified/critical verdict never depends on it alone.
+    strength: float = 0.8
 
 
 @dataclass

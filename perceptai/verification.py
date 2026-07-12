@@ -2,11 +2,21 @@
 
 Checks derive from what the task actually did — the apps it opened, the
 windows it focused, the input it sent, the information it was asked to
-extract — and from how the WORLD CHANGED between the first and the last
-observation ("did a window appear?", "did focus move?", "did content
-change?"), not merely whether inputs were sent. No per-application alias
-tables, no special cases, and no side effects: verification observes OS
-state, it never changes focus.
+extract, the elements it grounded through the fused world model the
+instant before acting — and from how the WORLD CHANGED between the first
+and the last observation. No per-application alias tables, no special
+cases, and no side effects: verification observes OS state, it never
+changes focus.
+
+Confidence is calibrated, not counted. Every check carries a strength —
+measured where possible (grounded actions carry their fusion confidence),
+a fixed source-weight otherwise — and the final confidence is noisy-OR
+support from passed checks, multiplicatively discounted by failures: the
+same corroboration/contradiction shape as fusion and beliefs. Independent
+confirmations compound; a failed critical check crushes certainty; a
+failed advisory check dents it visibly without zeroing honest positive
+evidence. The verdict stays conservative: critical checks gate it, and
+support below the floor is never claimed as verified.
 """
 from __future__ import annotations
 
@@ -32,6 +42,29 @@ _STATE_CHANGING = (
     ActionType.CLEAR_TYPE,
     ActionType.PRESS,
 )
+
+# Confidence is never reported as absolute certainty (matches fusion).
+_CONFIDENCE_CAP = 0.99
+# Below this support, positive evidence is too weak to claim the outcome:
+# the run stays honestly UNVERIFIED rather than completed-on-a-hunch.
+_VERIFIED_SUPPORT_FLOOR = 0.5
+# Advisory failures contradict at a fraction of their strength — they are
+# observations ("no visible change"), not proofs of failure.
+_ADVISORY_CONTRADICTION = 0.4
+
+# Fixed source-weights for derived checks (grounded actions are measured).
+_STRENGTH_WINDOW_EXISTS = 0.9
+_STRENGTH_FOCUSED_WINDOW = 0.6
+_STRENGTH_BROWSER_NAV = 0.5
+_STRENGTH_INPUT_TARGET = 0.8
+_STRENGTH_EXTRACTION = 0.8
+_STRENGTH_WORLD_CHANGED = 0.6
+_STRENGTH_CRITERION = 0.85
+_STRENGTH_JUDGE_DEGRADED = 0.2
+
+
+def _clamp(strength: float) -> float:
+    return max(0.0, min(float(strength), _CONFIDENCE_CAP))
 
 
 class Verifier:
@@ -74,6 +107,7 @@ class Verifier:
                 VerificationCheck(
                     name=f"window_exists:{app}",
                     passed=title is not None,
+                    strength=_STRENGTH_WINDOW_EXISTS,
                     detail=title or f"no window title contains '{app}'",
                 )
             )
@@ -85,6 +119,7 @@ class Verifier:
                     name=f"window_exists:{window}",
                     passed=title is not None,
                     critical=False,  # focused windows may legitimately close during a task
+                    strength=_STRENGTH_FOCUSED_WINDOW,
                     detail=title or f"no window title contains '{window}'",
                 )
             )
@@ -98,6 +133,7 @@ class Verifier:
                     name="browser_navigation",
                     passed=any_window,
                     critical=False,
+                    strength=_STRENGTH_BROWSER_NAV,
                     detail="navigation performed; window title unknown for default browser",
                 )
             )
@@ -117,6 +153,12 @@ class Verifier:
                     VerificationCheck(
                         name=f"input_target_exists:{target}",
                         passed=title is not None,
+                        # Advisory: dialogs legitimately close on submit, and the
+                        # planner's app alias ('erp') rarely equals the real
+                        # window title ('SAP Invoice Entry'). Absence discounts
+                        # confidence; it never vetoes an otherwise-confirmed run.
+                        critical=False,
+                        strength=_STRENGTH_INPUT_TARGET,
                         detail=title or f"input target '{target}' not found after execution",
                     )
                 )
@@ -126,10 +168,16 @@ class Verifier:
                 VerificationCheck(
                     name="extraction_present",
                     passed=bool(context.evidence),
+                    # Advisory: for information goals the criteria judge holds
+                    # the critical line on missing evidence; an action task
+                    # that read nothing en route is discounted, not vetoed.
+                    critical=False,
+                    strength=_STRENGTH_EXTRACTION,
                     detail=f"{len(context.evidence)} evidence item(s) captured",
                 )
             )
 
+        checks.extend(self._grounded_action_checks(steps))
         checks.extend(self._world_change_checks(steps, world_before, world_after))
         checks.extend(self._judge_completion_criteria(context, steps))
 
@@ -142,9 +190,9 @@ class Verifier:
             )
 
         critical = [c for c in checks if c.critical]
-        passed_critical = all(c.passed for c in critical) if critical else all(c.passed for c in checks)
-        passed_count = sum(1 for c in checks if c.passed)
-        confidence = round(passed_count / len(checks), 3)
+        critical_ok = all(c.passed for c in critical)
+        confidence = self._confidence(checks)
+        verified = critical_ok and confidence >= _VERIFIED_SUPPORT_FLOOR
 
         failed = [c for c in checks if not c.passed]
         reason = (
@@ -153,8 +201,60 @@ class Verifier:
             else "Failed checks: " + "; ".join(f"{c.name} ({c.detail})" for c in failed)
         )
         return VerificationResult(
-            verified=passed_critical, confidence=confidence, reason=reason, checks=checks
+            verified=verified, confidence=confidence, reason=reason, checks=checks
         )
+
+    @staticmethod
+    def _confidence(checks: list[VerificationCheck]) -> float:
+        """Noisy-OR support from passed checks, multiplicatively discounted
+        by failed ones. Positive measured evidence never scores 0.0; nothing
+        ever scores 1.0; a failed critical check contradicts at full
+        strength, a failed advisory check at a fraction of it."""
+        support = 1.0
+        for c in checks:
+            if c.passed:
+                support *= 1.0 - _clamp(c.strength)
+        support = 1.0 - support
+        for c in checks:
+            if not c.passed:
+                factor = _clamp(c.strength) * (1.0 if c.critical else _ADVISORY_CONTRADICTION)
+                support *= 1.0 - factor
+        return round(min(support, _CONFIDENCE_CAP), 3)
+
+    @staticmethod
+    def _grounded_action_checks(steps: list[StepResult]) -> list[VerificationCheck]:
+        """Execution evidence: a successful element-targeted action whose
+        target the fused world model resolved the instant before acting is
+        positive, measured evidence of the outcome — the same epistemic
+        position a human is in right after clicking a button. Strength is
+        the recorded grounding confidence, so weak perception never
+        inflates certainty. Advisory: grounding corroborates the outcome,
+        it never overrides a failed critical check."""
+        checks: list[VerificationCheck] = []
+        for r in steps:
+            if not r.ok:
+                continue
+            element = str(r.data.get("element") or "").strip()
+            try:
+                grounding = float(r.data.get("confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                grounding = 0.0
+            if not element or grounding <= 0.0:
+                continue
+            sources = [str(s) for s in (r.data.get("sources") or [])]
+            checks.append(
+                VerificationCheck(
+                    name=f"action_grounded:{element[:60]}",
+                    passed=True,
+                    critical=False,
+                    strength=grounding,
+                    detail=(
+                        f"'{element}' resolved at {grounding:.2f} confidence"
+                        + (f" by {', '.join(sources)}" if sources else "")
+                    ),
+                )
+            )
+        return checks
 
     @staticmethod
     def _world_change_checks(
@@ -181,6 +281,7 @@ class Verifier:
                 name="world_changed",
                 passed=diff.changed,
                 critical=False,
+                strength=_STRENGTH_WORLD_CHANGED,
                 detail=detail or "no observable change between first and last snapshot",
             )
         ]
@@ -231,9 +332,11 @@ Return ONLY the JSON array."""
             parsed, _raw = self._llm.complete_json(prompt, "verify", max_tokens=500)
         except Exception as e:
             return [VerificationCheck(name="criteria_judge", passed=False, critical=False,
+                                      strength=_STRENGTH_JUDGE_DEGRADED,
                                       detail=f"judge unavailable: {e}")]
         if not isinstance(parsed, list):
             return [VerificationCheck(name="criteria_judge", passed=False, critical=False,
+                                      strength=_STRENGTH_JUDGE_DEGRADED,
                                       detail="judge returned no valid verdicts")]
 
         checks: list[VerificationCheck] = []
@@ -250,6 +353,7 @@ Return ONLY the JSON array."""
                     name=f"criterion:{criterion[:60]}",
                     passed=bool(verdict.get("met", False)),
                     critical=critical,
+                    strength=_STRENGTH_CRITERION,
                     detail=str(verdict.get("reason", "")),
                 )
             )
