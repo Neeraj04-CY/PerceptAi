@@ -11,37 +11,40 @@ import { motion } from "framer-motion";
 import {
   Activity,
   ArrowRight,
+  BadgeCheck,
   BellRing,
+  CalendarClock,
   CheckCircle2,
   FileText,
+  Gauge,
   PlayCircle,
   Server,
-  ShieldCheck,
-  Users,
-  XCircle,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import {
   ApiApproval,
   ApiAttentionItem,
-  ApiCapabilities,
+  ApiFleetAutonomy,
   ApiMission,
+  ApiRunner,
   ApiTemplate,
+  ApiWorkflow,
+  AutonomyTier,
   DashboardStats,
-  OrgUsage,
   PlatformHealth,
   ackAttention,
   decideApproval,
   getApprovals,
   getAttention,
-  getCapabilities,
   getDashboardStats,
+  getFleetAutonomy,
   getMissions,
-  getOrgs,
-  getOrgUsage,
   getPlatformHealth,
+  getRunners,
   getTemplates,
+  getWorkflows,
 } from "@/lib/api";
 
 interface ControlData {
@@ -49,9 +52,10 @@ interface ControlData {
   missions: ApiMission[];
   approvals: ApiApproval[];
   attention: ApiAttentionItem[];
-  capabilities: ApiCapabilities | null;
   health: PlatformHealth | null;
-  usage: OrgUsage | null;
+  runners: ApiRunner[];
+  autonomy: ApiFleetAutonomy | null;
+  workflows: ApiWorkflow[];
   templates: ApiTemplate[];
 }
 
@@ -62,15 +66,17 @@ export default function MissionControlPage() {
   const [unauthorized, setUnauthorized] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    const [stats, missions, approvals, attention, capabilities, health, usage, templates] =
+    const [stats, missions, approvals, attention, health,
+           runners, autonomy, workflows, templates] =
       await Promise.allSettled([
         getDashboardStats(signal),
         getMissions(10, signal),
         getApprovals("pending", signal),
         getAttention("open", signal),
-        getCapabilities(signal),
         getPlatformHealth(signal),
-        getOrgs(signal).then((orgs) => (orgs[0] ? getOrgUsage(orgs[0].id, signal) : null)),
+        getRunners(signal),
+        getFleetAutonomy(signal),
+        getWorkflows(signal),
         getTemplates(signal),
       ]);
     if (stats.status === "rejected" && String(stats.reason).includes("Unauthorized")) {
@@ -82,9 +88,10 @@ export default function MissionControlPage() {
       missions: settled(missions, [] as ApiMission[]),
       approvals: settled(approvals, [] as ApiApproval[]),
       attention: settled(attention, [] as ApiAttentionItem[]),
-      capabilities: settled(capabilities, null),
       health: settled(health, null),
-      usage: settled(usage, null),
+      runners: settled(runners, [] as ApiRunner[]),
+      autonomy: settled(autonomy, null),
+      workflows: settled(workflows, [] as ApiWorkflow[]),
       templates: settled(templates, [] as ApiTemplate[]),
     });
   }, []);
@@ -105,114 +112,51 @@ export default function MissionControlPage() {
 
   if (loading || !data) return <ControlSkeleton />;
 
-  const { stats, missions, approvals, attention, capabilities, health, usage, templates } = data;
-  const runningMissions = missions.filter((m) => m.status === "running");
+  const { stats, missions, approvals, attention, health,
+          runners, autonomy, workflows, templates } = data;
   const recentSessions = stats?.recent_sessions ?? [];
-  const firstRun = recentSessions.length === 0 && missions.length === 0;
+  const runningMissions = missions.filter((m) => m.status === "running");
+  const runningSessions = recentSessions.filter((s) => s.status === "running");
+  const available = runners.filter((r) => r.status === "online" || r.status === "busy").length;
+  const scheduled = workflows.filter((w) => w.schedule?.enabled).length;
+  const firstRun = recentSessions.length === 0 && missions.length === 0 && runners.length === 0;
 
   return (
-    <div className="space-y-6">
-      {/* header + host truth */}
+    <div className="space-y-5">
       <PageHeader
-        title="Mission Control"
-        subtitle="Live operations across tasks, missions and the workforce."
+        title="Operations"
+        subtitle="Your autonomous workforce, at a glance — what's running, what needs you, and what you can trust."
         actions={<HealthStrip health={health} />}
       />
 
-      {/* stat strip */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
-        className="grid grid-cols-2 md:grid-cols-5 gap-3"
-      >
-        <Stat icon={Activity} label="Running now"
-              value={String(runningMissions.length)}
-              hint={runningMissions.length ? "missions in flight" : "all quiet"} />
-        <Stat icon={CheckCircle2} label="Succeeded"
-              value={String(stats?.successful_sessions ?? 0)}
-              hint="recent sessions" accent />
-        <Stat icon={XCircle} label="Failed"
-              value={String(stats?.failed_sessions ?? 0)}
-              hint="recent sessions"
-              alert={(stats?.failed_sessions ?? 0) > 0} />
-        <Stat icon={ShieldCheck} label="Needs approval"
-              value={String(approvals.length)}
-              hint={approvals.length ? "waiting on you" : "none pending"}
-              alert={approvals.length > 0} />
-        <Stat icon={Users} label="Specialists"
-              value={String(capabilities?.specialists.length ?? 0)}
-              hint={capabilities?.available
-                ? `${capabilities.capabilities.length} capabilities`
-                : "engine offline"} />
-      </motion.div>
+      {/* THE PULSE — the vitals line you read from across the room */}
+      <PulseBar
+        running={runningMissions.length + runningSessions.length}
+        needsYou={attention.length + approvals.length}
+        runnersAvailable={available}
+        runnersTotal={runners.length}
+        autonomy={autonomy}
+        verifiedToday={stats?.successful_sessions ?? 0}
+        failedToday={stats?.failed_sessions ?? 0}
+      />
 
       {firstRun ? (
         <FirstRun templates={templates} />
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-4 items-start">
-          {/* left: activity */}
-          <div className="space-y-4">
-            <Panel title="Missions" action={{ href: "/dashboard/missions", label: "All missions" }}>
-              {missions.length === 0 ? (
-                <Empty text="No missions yet — run one from the Run page or Studio."
-                       cta={{ href: "/dashboard/run", label: "Run a mission" }} />
-              ) : (
-                <div className="divide-y divide-white/[0.04]">
-                  {missions.slice(0, 6).map((mission) => (
-                    <Link key={mission.id} href={`/dashboard/missions/${mission.id}`}
-                          className="flex items-center gap-3 py-2.5 group">
-                      <StatusDot status={mission.status} />
-                      <span className="flex-1 min-w-0 truncate text-[13px] text-white/80 group-hover:text-white">
-                        {mission.instruction}
-                      </span>
-                      <span className="font-mono text-[10px] text-white/30 shrink-0">
-                        {mission.metrics
-                          ? `${mission.metrics.orders_completed}/${mission.metrics.orders_total} orders`
-                          : mission.status}
-                        {mission.duration_s ? ` · ${Math.round(mission.duration_s)}s` : ""}
-                      </span>
-                      <span className="font-mono text-[10px] text-white/25 shrink-0 w-16 text-right">
-                        {timeAgo(mission.created_at)}
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </Panel>
-
-            <Panel title="Sessions" action={{ href: "/dashboard/sessions", label: "All sessions" }}>
-              {recentSessions.length === 0 ? (
-                <Empty text="No task sessions yet." cta={{ href: "/dashboard/run", label: "Run a task" }} />
-              ) : (
-                <div className="divide-y divide-white/[0.04]">
-                  {recentSessions.slice(0, 6).map((session) => (
-                    <Link key={session.id} href={`/dashboard/sessions/${session.id}`}
-                          className="flex items-center gap-3 py-2.5 group">
-                      <StatusDot status={session.status} />
-                      <span className="flex-1 min-w-0 truncate text-[13px] text-white/80 group-hover:text-white">
-                        {session.instruction}
-                      </span>
-                      <span className="font-mono text-[10px] text-white/30 shrink-0">
-                        {session.steps_count} steps
-                        {session.execution_time ? ` · ${session.execution_time.toFixed(1)}s` : ""}
-                      </span>
-                      <span className="font-mono text-[10px] text-white/25 shrink-0 w-16 text-right">
-                        {timeAgo(session.created_at)}
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </Panel>
-          </div>
-
-          {/* right: control rail */}
+        <div className="grid grid-cols-1 xl:grid-cols-[1.55fr_1fr] gap-4 items-start">
+          {/* ACT + WATCH */}
           <div className="space-y-4">
             <AttentionPanel items={attention} onAcked={() => load()} />
             <ApprovalsPanel approvals={approvals} onDecided={() => load()} />
-            <UsagePanel usage={usage} stats={stats} />
-            <SpecialistPanel capabilities={capabilities} />
+            <InFlight missions={runningMissions} sessions={runningSessions}
+                      recentSessions={recentSessions} recentMissions={missions} />
+          </div>
+
+          {/* TRUST + PLAN */}
+          <div className="space-y-4">
+            <AutonomyPosture autonomy={autonomy} />
+            <FleetCapacity runners={runners} health={health} scheduled={scheduled} />
+            <ComingUp workflows={workflows} autonomy={autonomy} />
           </div>
         </div>
       )}
@@ -220,31 +164,275 @@ export default function MissionControlPage() {
   );
 }
 
+/* ======================================================= the pulse ======= */
+
+function PulseBar({ running, needsYou, runnersAvailable, runnersTotal, autonomy,
+                    verifiedToday, failedToday }: {
+  running: number; needsYou: number; runnersAvailable: number; runnersTotal: number;
+  autonomy: ApiFleetAutonomy | null; verifiedToday: number; failedToday: number;
+}) {
+  const earned = autonomy?.earned_autonomy ?? 0;
+  const graded = autonomy?.graded_workflows ?? 0;
+  const liars = autonomy?.confident_liars.length ?? 0;
+  const cells: Array<{ icon: React.ReactNode; value: string; label: string; tone: string }> = [
+    { icon: <Activity size={14} />, value: String(running), tone: running ? "text-sky-300" : "text-white/70",
+      label: running === 1 ? "running now" : "running now" },
+    { icon: <BellRing size={14} />, value: String(needsYou), tone: needsYou ? "text-amber-300" : "text-accent",
+      label: needsYou ? "need you" : "all handled" },
+    { icon: <Server size={14} />, value: `${runnersAvailable}/${runnersTotal}`,
+      tone: runnersTotal === 0 ? "text-white/40" : runnersAvailable < runnersTotal ? "text-amber-300" : "text-accent",
+      label: "fleet ready" },
+    { icon: <CheckCircle2 size={14} />, value: String(verifiedToday), tone: "text-accent",
+      label: failedToday ? `verified · ${failedToday} failed` : "verified recently" },
+    { icon: <BadgeCheck size={14} />, value: graded ? `${earned}/${graded}` : "—", tone: earned ? "text-accent" : "text-white/60",
+      label: liars ? `earned autonomy · ${liars} to watch` : "workflows earned autonomy" },
+  ];
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+                className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      {cells.map((c, i) => (
+        <div key={i} className="glass rounded-xl px-4 py-3">
+          <div className={cn("flex items-center gap-2", c.tone)}>{c.icon}
+            <span className="text-[22px] font-semibold tabular-nums leading-none">{c.value}</span>
+          </div>
+          <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-white/35">{c.label}</div>
+        </div>
+      ))}
+    </motion.div>
+  );
+}
+
+/* ============================================= autonomy posture (TRUST) === */
+
+const TIER_META: Record<AutonomyTier, { label: string; fg: string; dot: string }> = {
+  ready: { label: "Earned autonomy", fg: "text-accent", dot: "bg-accent" },
+  supervised: { label: "Supervised", fg: "text-amber-300", dot: "bg-amber-300" },
+  in_the_loop: { label: "In the loop", fg: "text-red-300", dot: "bg-red-400" },
+  insufficient: { label: "Building evidence", fg: "text-white/50", dot: "bg-white/40" },
+};
+
+function AutonomyPosture({ autonomy }: { autonomy: ApiFleetAutonomy | null }) {
+  if (!autonomy || autonomy.total_workflows === 0) {
+    return (
+      <Panel title="Autonomy posture">
+        <p className="py-3 text-[12px] text-white/40">
+          Publish a workflow and run it a few times — PerceptAI measures its verified reliability and
+          tells you when it has earned the right to run unattended.
+        </p>
+      </Panel>
+    );
+  }
+  const fleetPct = autonomy.fleet_verified_success_rate != null
+    ? Math.round(autonomy.fleet_verified_success_rate * 100) : null;
+  const order: AutonomyTier[] = ["ready", "supervised", "in_the_loop", "insufficient"];
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden" data-testid="autonomy-posture">
+      <div className="flex items-center justify-between px-4 h-11 border-b border-white/[0.06]">
+        <div className="flex items-center gap-2">
+          <Gauge size={13} className="text-white/45" />
+          <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/45">Autonomy posture</span>
+        </div>
+        <Link href="/dashboard/studio" className="font-mono text-[10px] uppercase tracking-wider text-white/35 hover:text-accent transition-colors">
+          Studio
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-2 divide-x divide-white/[0.06] border-b border-white/[0.06]">
+        <div className="px-4 py-3">
+          <div className="font-mono text-[9px] uppercase tracking-wider text-white/35">Earned autonomy</div>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className="text-[24px] font-semibold tabular-nums leading-none text-accent">{autonomy.earned_autonomy}</span>
+            <span className="text-[11px] text-white/35">/ {autonomy.graded_workflows} workflows</span>
+          </div>
+          <div className="mt-1 text-[9.5px] text-white/30">run unattended, safely</div>
+        </div>
+        <div className="px-4 py-3">
+          <div className="font-mono text-[9px] uppercase tracking-wider text-white/35">Fleet verified success</div>
+          <div className={cn("mt-0.5 text-[24px] font-semibold tabular-nums leading-none",
+                             (fleetPct ?? 0) >= 90 ? "text-accent" : (fleetPct ?? 0) >= 70 ? "text-amber-300" : "text-white/70")}>
+            {fleetPct != null ? `${fleetPct}%` : "—"}
+          </div>
+          <div className="mt-1 text-[9.5px] text-white/30">across {autonomy.total_runs} runs</div>
+        </div>
+      </div>
+
+      {/* the confident liars — reliable-looking, not trustworthy */}
+      {autonomy.confident_liars.length > 0 && (
+        <div className="px-4 py-2.5 border-b border-white/[0.06] bg-red-400/[0.03]">
+          <div className="flex items-center gap-1.5 text-red-300">
+            <ShieldAlert size={12} />
+            <span className="font-mono text-[9.5px] uppercase tracking-wider">
+              {autonomy.confident_liars.length} look reliable but aren&apos;t calibrated
+            </span>
+          </div>
+          <div className="mt-1.5 space-y-1">
+            {autonomy.confident_liars.slice(0, 2).map((w) => (
+              <Link key={w.id} href={`/dashboard/studio/${w.id}`}
+                    className="flex items-center gap-2 text-[12px] text-white/70 hover:text-white">
+                <span className="truncate flex-1">{w.name}</span>
+                <span className="font-mono text-[10px] text-accent/80">{Math.round(w.verified_success_rate * 100)}% ok</span>
+                <span className="font-mono text-[10px] text-red-300/80">poorly calibrated</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* tier ladder */}
+      <div className="px-4 py-3">
+        {order.filter((t) => (autonomy.by_tier[t] ?? 0) > 0).map((tier) => (
+          <div key={tier} className="flex items-center gap-2.5 py-1">
+            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", TIER_META[tier].dot)} />
+            <span className={cn("text-[12px]", TIER_META[tier].fg)}>{TIER_META[tier].label}</span>
+            <span className="ml-auto font-mono text-[12px] tabular-nums text-white/60">{autonomy.by_tier[tier]}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ============================================== fleet capacity (TRUST) === */
+
+function FleetCapacity({ runners, health, scheduled }: {
+  runners: ApiRunner[]; health: PlatformHealth | null; scheduled: number;
+}) {
+  const tone = (s: string) =>
+    s === "online" || s === "busy" ? "bg-accent"
+      : s === "offline" || s === "network_unavailable" ? "bg-white/30" : "bg-amber-300";
+  return (
+    <Panel title="Fleet capacity" action={{ href: "/dashboard/runners", label: "Runners" }}>
+      {runners.length === 0 ? (
+        <p className="py-2 text-[12px] text-white/40">
+          No runners yet. A runner executes work on a real Windows desktop — connect one to run unattended.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {runners.slice(0, 5).map((r) => (
+            <div key={r.id} className="flex items-center gap-2.5"
+                 title={r.readiness?.detail || undefined}>
+              <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", tone(r.status))} />
+              <span className="text-[12.5px] text-white/80 truncate">{r.name}</span>
+              <span className={cn("ml-auto font-mono text-[10px] uppercase tracking-wider shrink-0",
+                                  r.status === "online" || r.status === "busy" ? "text-accent/80"
+                                    : r.status === "offline" ? "text-white/35" : "text-amber-300/90")}>
+                {r.status.replace(/_/g, " ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-2.5 flex items-center gap-3 border-t border-white/[0.05] pt-2 font-mono text-[9.5px] uppercase tracking-wider text-white/35">
+        <span className="flex items-center gap-1">
+          <span className={cn("h-1.5 w-1.5 rounded-full", health?.scheduler ? "bg-accent" : "bg-white/25")} />
+          scheduler {health?.scheduler ? "on" : "off"}
+        </span>
+        <span>· {scheduled} scheduled</span>
+      </div>
+    </Panel>
+  );
+}
+
+/* ================================================== coming up (PLAN) === */
+
+function ComingUp({ workflows, autonomy }: {
+  workflows: ApiWorkflow[]; autonomy: ApiFleetAutonomy | null;
+}) {
+  const tierOf = (id: string): AutonomyTier | null =>
+    autonomy?.workflows.find((w) => w.id === id)?.tier ?? null;
+  const upcoming = workflows
+    .filter((w) => w.schedule?.enabled && w.schedule?.next_run_at)
+    .sort((a, b) => (a.schedule!.next_run_at! < b.schedule!.next_run_at! ? -1 : 1))
+    .slice(0, 5);
+  if (upcoming.length === 0) return null;
+  return (
+    <Panel title="Coming up" action={{ href: "/dashboard/studio", label: "Studio" }}>
+      <div className="space-y-2">
+        {upcoming.map((w) => {
+          const tier = tierOf(w.id);
+          return (
+            <Link key={w.id} href={`/dashboard/studio/${w.id}`}
+                  className="flex items-center gap-2.5 group">
+              <CalendarClock size={13} className="text-white/30 shrink-0" />
+              <span className="flex-1 min-w-0 truncate text-[12.5px] text-white/80 group-hover:text-white">{w.name}</span>
+              {tier && (
+                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", TIER_META[tier].dot)}
+                      title={TIER_META[tier].label} />
+              )}
+              <span className="font-mono text-[10px] text-white/35 shrink-0">
+                {relativeWhen(w.schedule!.next_run_at!)}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+/* ==================================================== in flight (WATCH) === */
+
+function InFlight({ missions, sessions, recentSessions, recentMissions }: {
+  missions: ApiMission[];
+  sessions: DashboardStats["recent_sessions"];
+  recentSessions: DashboardStats["recent_sessions"];
+  recentMissions: ApiMission[];
+}) {
+  const live = missions.length + sessions.length;
+  return (
+    <Panel title={live ? "In flight" : "Recent activity"}
+           action={{ href: "/dashboard/sessions", label: "All runs" }}>
+      {live === 0 && recentSessions.length === 0 && recentMissions.length === 0 ? (
+        <Empty text="Nothing has run yet." cta={{ href: "/dashboard/run", label: "Run a task" }} />
+      ) : (
+        <div className="divide-y divide-white/[0.04]">
+          {missions.map((m) => (
+            <Link key={m.id} href={`/dashboard/missions/${m.id}`} className="flex items-center gap-3 py-2.5 group">
+              <StatusDot status={m.status} />
+              <span className="flex-1 min-w-0 truncate text-[13px] text-white/80 group-hover:text-white">{m.instruction}</span>
+              <span className="font-mono text-[10px] text-sky-300/80 shrink-0">
+                {m.metrics ? `${m.metrics.orders_completed}/${m.metrics.orders_total} orders` : "running"}
+              </span>
+            </Link>
+          ))}
+          {sessions.map((s) => (
+            <Link key={s.id} href={`/dashboard/sessions/${s.id}`} className="flex items-center gap-3 py-2.5 group">
+              <StatusDot status={s.status} />
+              <span className="flex-1 min-w-0 truncate text-[13px] text-white/80 group-hover:text-white">{s.instruction}</span>
+              <span className="font-mono text-[10px] text-sky-300/80 shrink-0">running</span>
+            </Link>
+          ))}
+          {/* fall back to recent finished runs when nothing is live */}
+          {live === 0 && recentSessions.slice(0, 6).map((s) => (
+            <Link key={s.id} href={`/dashboard/sessions/${s.id}`} className="flex items-center gap-3 py-2.5 group">
+              <StatusDot status={s.status} />
+              <span className="flex-1 min-w-0 truncate text-[13px] text-white/80 group-hover:text-white">{s.instruction}</span>
+              <span className="font-mono text-[10px] text-white/30 shrink-0">
+                {s.steps_count} steps{s.execution_time ? ` · ${s.execution_time.toFixed(1)}s` : ""}
+              </span>
+              <span className="font-mono text-[10px] text-white/25 shrink-0 w-16 text-right">{timeAgo(s.created_at)}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function relativeWhen(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const s = (then - Date.now()) / 1000;
+  if (s <= 0) return "due";
+  if (s < 3600) return `in ${Math.round(s / 60)}m`;
+  if (s < 86400) return `in ${Math.round(s / 3600)}h`;
+  return `in ${Math.round(s / 86400)}d`;
+}
+
 /* ------------------------------------------------------------------ */
 
 function settled<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === "fulfilled" ? result.value : fallback;
-}
-
-function Stat({ icon: Icon, label, value, hint, accent, alert }: {
-  icon: typeof Activity; label: string; value: string; hint: string;
-  accent?: boolean; alert?: boolean;
-}) {
-  return (
-    <div className="glass rounded-xl px-4 py-3">
-      <div className="flex items-center gap-2 text-white/40">
-        <Icon size={13} strokeWidth={1.6} />
-        <span className="font-mono text-[9px] uppercase tracking-[0.18em]">{label}</span>
-      </div>
-      <div className={cn(
-        "mt-1.5 text-[22px] font-medium tabular-nums leading-none",
-        accent ? "text-accent" : alert ? "text-amber-300" : "text-white",
-      )}>
-        {value}
-      </div>
-      <div className="mt-1 text-[10px] text-white/30 truncate">{hint}</div>
-    </div>
-  );
 }
 
 function Panel({ title, action, children }: {
@@ -458,78 +646,6 @@ function ApprovalsPanel({ approvals, onDecided }: {
               </div>
             </div>
           ))}
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function UsagePanel({ usage, stats }: { usage: OrgUsage | null; stats: DashboardStats | null }) {
-  const used = usage?.executions_used ?? stats?.total_executions_this_month ?? 0;
-  const limit = usage?.executions_limit ?? stats?.executions_limit ?? 0;
-  const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
-  return (
-    <Panel title="Usage & budget" action={{ href: "/dashboard/org", label: "Details" }}>
-      <div className="flex items-baseline justify-between">
-        <span className="text-[18px] font-medium tabular-nums text-white">{used.toLocaleString()}</span>
-        <span className="font-mono text-[10px] text-white/35">
-          of {limit.toLocaleString()} runs · {(usage?.plan ?? stats?.plan ?? "free").toUpperCase()}
-        </span>
-      </div>
-      <div className="mt-2 h-1 rounded-full bg-white/[0.06] overflow-hidden">
-        <div className={cn("h-full rounded-full transition-[width] duration-500",
-                           pct > 90 ? "bg-red-400" : pct > 70 ? "bg-amber-300" : "bg-accent")}
-             style={{ width: `${pct}%` }} />
-      </div>
-      {usage?.workforce_limits && (
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1">
-          <Meta k="parallel specialists" v={String(usage.workforce_limits.max_parallel ?? "—")} />
-          <Meta k="orders / mission" v={String(usage.workforce_limits.max_work_orders ?? "—")} />
-          <Meta k="mission budget" v={`${usage.workforce_limits.max_total_cost ?? "—"} cr`} />
-          <Meta k="mission wall clock" v={`${Math.round((usage.workforce_limits.max_mission_duration_s ?? 0) / 60)}m`} />
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function Meta({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-center justify-between gap-2 min-w-0">
-      <span className="font-mono text-[9px] uppercase tracking-wider text-white/30 truncate">{k}</span>
-      <span className="font-mono text-[10px] text-white/60 tabular-nums">{v}</span>
-    </div>
-  );
-}
-
-function SpecialistPanel({ capabilities }: { capabilities: ApiCapabilities | null }) {
-  return (
-    <Panel title="Workforce roster">
-      {!capabilities?.available ? (
-        <p className="py-3 text-[12px] text-white/35">
-          Engine offline on this host — the roster appears when the API runs
-          on a desktop machine.
-        </p>
-      ) : (
-        <div className="space-y-1.5">
-          {capabilities.specialists.map((s) => (
-            <div key={s.name} className="flex items-center gap-2.5">
-              <span className={cn("h-1.5 w-1.5 rounded-full shrink-0",
-                                  s.healthy ? "bg-accent" : "bg-red-400")} />
-              <span className="text-[12px] text-white/75 w-28 truncate">{s.name}</span>
-              <span className="font-mono text-[10px] text-white/30 flex-1 truncate">
-                {s.capabilities.join(", ")}
-              </span>
-              <span className="font-mono text-[9px] text-white/25 shrink-0">
-                {s.resources.includes("desktop") ? "desktop" : "compute"}
-              </span>
-            </div>
-          ))}
-          {typeof capabilities.plugin_count === "number" && (
-            <p className="pt-1.5 font-mono text-[9px] uppercase tracking-wider text-white/25">
-              {capabilities.plugin_count} plugin specialist(s) discovered
-            </p>
-          )}
         </div>
       )}
     </Panel>

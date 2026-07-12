@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from auth import get_current_user
 from config import config
 from database import get_service_db
-from templates import TEMPLATES
+from templates import PACKS, TEMPLATES
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -19,6 +19,17 @@ router = APIRouter(prefix="/platform", tags=["platform"])
 @router.get("/templates")
 async def list_templates():
     return TEMPLATES
+
+
+@router.get("/packs")
+async def list_packs():
+    """The catalog grouped by department: each pack plus its templates. The
+    catalog UX renders from this; the flat /templates endpoint stays for
+    backwards compatibility."""
+    by_pack: dict[str, list] = {}
+    for t in TEMPLATES:
+        by_pack.setdefault(t.get("pack", "other"), []).append(t)
+    return [{**pack, "templates": by_pack.get(pack["id"], [])} for pack in PACKS]
 
 
 @router.get("/capabilities")

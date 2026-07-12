@@ -433,6 +433,7 @@ export interface ApiWorkspace {
     max_cost_per_mission?: number | null;
   } | null;
   notify_webhook_url?: string | null; // the signing secret is write-only, never returned
+  egress_policy?: { mode?: string; redact?: string[]; custom_patterns?: string[] } | null;
   created_at?: string;
 }
 
@@ -629,6 +630,19 @@ export interface ApiTemplate {
   instruction: string;
   variables: ApiWorkflowVariable[];
   outputs: string[];
+  // Enterprise catalog metadata (Chapter XI).
+  pack?: string;
+  flagship?: boolean;
+  value?: string;
+  apps?: string[];
+  time_saved?: string;
+}
+
+export interface ApiPack {
+  id: string;
+  name: string;
+  tagline: string;
+  templates: ApiTemplate[];
 }
 
 export interface ApiCapabilities {
@@ -728,6 +742,13 @@ export const getTemplates = (signal?: AbortSignal) => {
       return r.json() as Promise<ApiTemplate[]>;
     });
 };
+export const getPacks = (signal?: AbortSignal) => {
+  return fetch(`${API_V1}/platform/packs`, { cache: "no-store", signal })
+    .then((r) => {
+      if (!r.ok) throw new Error(`Failed to load packs (${r.status})`);
+      return r.json() as Promise<ApiPack[]>;
+    });
+};
 export const getCapabilities = (signal?: AbortSignal) =>
   getJsonAuth<ApiCapabilities>("/platform/capabilities", signal);
 export const getPlatformHealth = (signal?: AbortSignal) => {
@@ -739,6 +760,20 @@ export const getPlatformHealth = (signal?: AbortSignal) => {
 };
 
 // Runners (distributed execution)
+// Session truth (Chapter IX): a live runner that cannot drive its desktop is
+// neither online nor offline — it is in a specific, self-explaining state.
+export type RunnerStatus =
+  | "online" | "offline" | "busy"
+  | "locked" | "logged_out" | "screen_unavailable"
+  | "permission_denied" | "network_unavailable" | "unknown";
+
+export interface RunnerReadiness {
+  state?: string;
+  detail?: string;
+  fix?: string;
+  can_execute?: boolean;
+}
+
 export interface ApiRunner {
   id: string;
   name: string;
@@ -747,7 +782,8 @@ export interface ApiRunner {
   capabilities: Record<string, unknown>;
   current_session_id: string | null;
   last_heartbeat_at: string | null;
-  status: "online" | "offline" | "busy";
+  status: RunnerStatus;
+  readiness?: RunnerReadiness;
   created_at: string;
 }
 
@@ -810,11 +846,89 @@ export interface ApiWorkflowHealth {
   success_rate: number | null;
 }
 
+// Workflow Assurance (Chapter XIII) — the measured, VERIFIED reliability of a
+// workflow, and the evidence-backed autonomy verdict it has earned.
+export type AutonomyTier = "ready" | "supervised" | "in_the_loop" | "insufficient";
+export interface ApiAutonomyVerdict {
+  tier: AutonomyTier;
+  headline: string;
+  reason: string;
+  next: string;
+}
+export interface ApiWorkflowAssurance {
+  sample_size: number;
+  verified_success_rate: number;
+  completed: number;
+  unverified: number;
+  failed: number;
+  calibration_error: number | null;
+  calibration_samples: number;
+  avg_duration_s: number | null;
+  failure_taxonomy: Array<{ type: string; count: number }>;
+  autonomy: ApiAutonomyVerdict;
+}
+
 export const getWorkflowRuns = (id: string, limit = 50, signal?: AbortSignal) =>
-  getJsonAuth<{ runs: ApiWorkflowRun[]; health: ApiWorkflowHealth }>(
+  getJsonAuth<{ runs: ApiWorkflowRun[]; health: ApiWorkflowHealth; assurance: ApiWorkflowAssurance }>(
     `/workflows/${encodeURIComponent(id)}/runs?limit=${limit}`, signal);
+
+// Fleet autonomy posture (Chapter XIV) — the command center's trust pillar:
+// how much of the autonomous workforce has earned self-operation, rolled up
+// across every published workflow's verified assurance.
+export interface ApiWorkflowCard {
+  id: string;
+  name: string;
+  tier: AutonomyTier;
+  verified_success_rate: number;
+  sample_size: number;
+  calibration_error: number | null;
+}
+export interface ApiFleetAutonomy {
+  total_workflows: number;
+  graded_workflows: number;
+  by_tier: Record<AutonomyTier, number>;
+  earned_autonomy: number;
+  total_runs: number;
+  fleet_verified_success_rate: number | null;
+  confident_liars: ApiWorkflowCard[];
+  workflows: ApiWorkflowCard[];
+}
+export const getFleetAutonomy = (signal?: AbortSignal) =>
+  getJsonAuth<ApiFleetAutonomy>("/workflows/autonomy", signal);
 
 // Workspace notification webhook (secret returned once, then write-only)
 export const setWorkspaceWebhook = (orgId: string, workspaceId: string, url: string | null) =>
   sendJsonAuth<{ url: string | null; secret: string | null }>(
     "PUT", `/orgs/${orgId}/workspaces/${workspaceId}/webhook`, { url });
+
+// Data-egress policy (Chapter IX) — what may leave this workspace's machines.
+export type EgressMode = "allow" | "redact" | "local_only" | "deny";
+export interface EgressPolicy {
+  mode: EgressMode;
+  redact: string[];
+  custom_patterns: string[];
+}
+export const setWorkspaceEgress = (
+  orgId: string, workspaceId: string, body: { mode: EgressMode; redact?: string[]; custom_patterns?: string[] },
+) => sendJsonAuth<EgressPolicy>("PUT", `/orgs/${orgId}/workspaces/${workspaceId}/egress`, body);
+
+// Learning consent (Chapter IX foundation) — what PerceptAI may learn.
+export interface LearningPolicy {
+  tiers: Record<string, boolean>;
+  anonymization: string;
+  derivative_data: string;
+  knowledge_owner: string;
+  policy_version: string;
+}
+export interface LearningInfo {
+  policy: LearningPolicy;
+  tiers: Record<string, { grants: string; benefit: string; shares_outside_workspace: string }>;
+  policy_version: string;
+  history: Array<{ tier: string; granted: boolean; actor_email: string; created_at: string; policy_version: string }>;
+}
+export const getWorkspaceLearning = (orgId: string, workspaceId: string, signal?: AbortSignal) =>
+  getJsonAuth<LearningInfo>(`/orgs/${orgId}/workspaces/${workspaceId}/learning`, signal);
+export const setWorkspaceLearning = (
+  orgId: string, workspaceId: string, body: { tiers: Record<string, boolean>; anonymization?: string },
+) => sendJsonAuth<{ policy: LearningPolicy; changes: unknown[] }>(
+  "PUT", `/orgs/${orgId}/workspaces/${workspaceId}/learning`, body);

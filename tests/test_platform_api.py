@@ -155,25 +155,34 @@ class TestTemplates:
             assert slots <= declared, f"{t['id']} uses undeclared variables"
 
     def test_get_template(self):
-        assert get_template("research-report")["mode"] == "mission"
+        assert get_template("erp-invoice-posting")["mode"] == "task"
         assert get_template("nope") is None
 
     def test_render_substitutes_values(self):
-        t = get_template("extract-values")
+        t = get_template("statement-data-entry")
         out = render_instruction(t["instruction"], t["variables"],
-                                 {"source": "invoice.pdf", "fields": "total, date"})
-        assert "invoice.pdf" in out and "total, date" in out
+                                 {"app": "SAP", "record": "INV-4471, $12,400"})
+        assert "SAP" in out and "INV-4471" in out
         assert "{{" not in out
 
     def test_render_uses_defaults(self):
-        t = get_template("app-smoke-test")
+        t = get_template("starter-smoke-test")
         out = render_instruction(t["instruction"], t["variables"], {})
-        assert "Notepad" in out
+        assert "Hello from PerceptAI" in out
 
     def test_render_missing_required_raises(self):
-        t = get_template("research-report")
-        with pytest.raises(ValueError, match="topic"):
+        t = get_template("erp-invoice-posting")
+        with pytest.raises(ValueError, match="vendor"):
             render_instruction(t["instruction"], t["variables"], {})
+
+    def test_secret_reference_survives_render_untouched(self):
+        # A {{secret:NAME}} reference is not a variable and must pass through
+        # render intact — the runtime resolves it out-of-band (Sprint 7).
+        t = get_template("crm-opportunity-update")
+        out = render_instruction(t["instruction"], t["variables"],
+                                 {"account": "ACME", "amount": "250000"})
+        assert "{{secret:CRM_PASSWORD}}" in out
+        assert "ACME" in out and "250000" in out
 
     def test_render_undeclared_slot_raises(self):
         with pytest.raises(ValueError, match="mystery"):
