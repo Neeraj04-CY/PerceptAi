@@ -33,6 +33,8 @@ const PASSWORD = process.env.SMOKE_PASSWORD || "SmokeTest123!";
 // starting a task takes over the real mouse/keyboard on this machine.
 const PAGES = {
   dashboard: "/dashboard",
+  workforce: "/dashboard/workforce",
+  evidence: "/dashboard/evidence",
   operations: "/dashboard/operations",
   templates: "/dashboard/templates",
   approvals: "/dashboard/approvals",

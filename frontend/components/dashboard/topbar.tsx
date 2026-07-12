@@ -12,6 +12,8 @@ import { openCommandPalette } from "./command-palette";
 
 const SECTIONS: Record<string, string> = {
   "/dashboard": "Today",
+  "/dashboard/workforce": "Workforce",
+  "/dashboard/evidence": "Evidence",
   "/dashboard/run": "Assign work",
   "/dashboard/operations": "Operations",
   "/dashboard/missions": "Operations",

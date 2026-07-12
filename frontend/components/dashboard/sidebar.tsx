@@ -6,8 +6,10 @@ import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sunrise,
+  Users,
   History,
   LibraryBig,
+  Fingerprint,
   ShieldCheck,
   Lightbulb,
   Settings2,
@@ -22,10 +24,14 @@ import { cn } from "@/lib/utils";
 const nav = [
   { label: "Today", href: "/dashboard", icon: Sunrise, testid: "nav-home", enabled: true,
     matches: [] as string[] },
+  { label: "Workforce", href: "/dashboard/workforce", icon: Users, testid: "nav-workforce", enabled: true,
+    matches: [] as string[] },
   { label: "Operations", href: "/dashboard/operations", icon: History, testid: "nav-operations", enabled: true,
     matches: ["/dashboard/sessions", "/dashboard/missions", "/dashboard/run"] },
   { label: "Templates", href: "/dashboard/templates", icon: LibraryBig, testid: "nav-templates", enabled: true,
     matches: ["/dashboard/studio"] },
+  { label: "Evidence", href: "/dashboard/evidence", icon: Fingerprint, testid: "nav-evidence", enabled: true,
+    matches: [] as string[] },
   { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true,
     matches: [] as string[] },
   { label: "Answers", href: "/dashboard/answers", icon: Lightbulb, testid: "nav-answers", enabled: true,
