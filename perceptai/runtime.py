@@ -32,6 +32,7 @@ from .contracts import (
     RiskFlag,
     RiskLevel,
     RunControl,
+    STATE_CHANGING_ACTIONS,
     Step,
     StepResult,
     StepStatus,
@@ -65,6 +66,9 @@ class ExecutionEngine:
         self._last_injection: Optional[tuple] = None
         self._goal_guard: Optional[GoalGuard] = None
         self._executed: list[StepResult] = []
+        # Effect attribution (Phase 2): the most recent successful
+        # state-changing step still awaiting its post-action observation.
+        self._effect_pending: Optional[StepResult] = None
 
     # -------------------------------------------------------- world model
 
@@ -75,9 +79,30 @@ class ExecutionEngine:
         self._last_world = world
         if self._baseline_world is None:
             self._baseline_world = world
+        self._attribute_effect()
         self._emit_world(task, world)
         self._emit_injection(task, world)
         return world
+
+    def _attribute_effect(self) -> None:
+        """Causal evidence: attribute the freshest world diff to the
+        state-changing step that preceded it. 'No change yet' can be
+        upgraded by a later snapshot (slow renders); an observed change
+        closes the attribution — subsequent diffs belong to whatever
+        happens next, never retroactively to this step. Verification
+        consumes the result as measured per-action evidence."""
+        pending = self._effect_pending
+        diff = self._s.world.last_diff
+        if pending is None or diff is None:
+            return
+        effect = pending.data.get("effect")
+        if diff.changed or not effect:
+            pending.data["effect"] = {
+                "changed": bool(diff.changed),
+                "summary": diff.summary or "",
+            }
+        if diff.changed:
+            self._effect_pending = None
 
     def _emit_injection(self, task: Task, world: WorldState) -> None:
         """Record that this screen tried to instruct the agent.
@@ -140,6 +165,7 @@ class ExecutionEngine:
         self._exec_state = state
         executed: list[StepResult] = []
         self._executed = executed
+        self._effect_pending = None
         errors: list[str] = []
 
         self._s.emit(EventType.TASK_STARTED, task, instruction=task.instruction)
@@ -556,6 +582,15 @@ class ExecutionEngine:
             data=outcome.data,
         )
         executed.append(result)
+        if outcome.ok and step.action in STATE_CHANGING_ACTIONS and \
+                parse_secret_reference(str(step.params.get("text", ""))) is None:
+            # The next snapshot's diff belongs to this step. If no snapshot
+            # separated it from its predecessor, the predecessor keeps only
+            # what was already observed — effects are never back-attributed.
+            # Secret-injection steps are exempt: they record the masked
+            # reference and NOTHING else — never observation-derived data
+            # that could echo screen content.
+            self._effect_pending = result
         self._s.emit(
             EventType.STEP_COMPLETED, task,
             step_number=index, description=step.description, action=step.action.value,
@@ -1077,6 +1112,7 @@ class ExecutionEngine:
             try:
                 final_world = self._s.world.snapshot(force_refresh=True)
                 self._last_world = final_world
+                self._attribute_effect()  # the last step's effect window closes here
             except Exception:
                 final_world = None
 

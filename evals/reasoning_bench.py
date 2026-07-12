@@ -85,6 +85,7 @@ def _scenarios() -> list[Scenario]:
             plans=[[_step("click", "click submit order", find="Submit Order", app="shop")]],
             screens=[["Submit Order", "Submit Query", "Header", "Footer", "Nav"]],
             windows=["shop - window"],
+            reactions={"submit order": ["Order Confirmed", "Receipt", "Header", "Footer"]},
         ),
         outcome=lambda fakes, result: len(fakes["actions"].clicks) == 1,
         behaved=lambda fakes, result: any(
@@ -101,6 +102,7 @@ def _scenarios() -> list[Scenario]:
             plans=[[_step("click", "click continue", find="Continue", app="dash")]],
             screens=[["Loading"], ["Loading"], ["Dashboard", "Continue", "Settings", "Help"]],
             windows=["dash - window"],
+            reactions={"continue": ["Welcome", "Overview", "Settings", "Help"]},
         ),
         outcome=lambda fakes, result: len(fakes["actions"].clicks) == 1,
     ))
@@ -117,6 +119,7 @@ def _scenarios() -> list[Scenario]:
             ],
             screens=[["Welcome", "Submit Form", "Cancel", "Header", "Footer"]],
             windows=["myapp - window"],
+            reactions={"submit form": ["Form Submitted", "Done", "Home"]},
         ),
         outcome=lambda fakes, result: len(fakes["actions"].clicks) == 1,
         recovery_possible=False,  # no recovery fixes a renamed control; replanning does
@@ -131,6 +134,7 @@ def _scenarios() -> list[Scenario]:
             plans=[[_step("click", "click submit", find="Submit Form", app="myapp")]],
             screens=[["Welcome", "Subrnit Form", "Cancel", "Header", "Footer"]],
             windows=["myapp - window"],
+            reactions={"subrnit form": ["Form Submitted", "Done", "Home"]},
         ),
         outcome=lambda fakes, result: len(fakes["actions"].clicks) == 1,
     ))
@@ -248,6 +252,7 @@ def _partial_progress_build():
             _step("open_app", "open notepad", app="notepad", wait=0.0),
             _step("type", "type hello", text="hello", app="notepad"),
         ]],
+        reactions={"type:hello": ["Untitled - Notepad", "hello"]},
         healing=[HealingPlan(
             diagnosis="window lost focus", failure_type="focus_lost",
             steps=[_step("focus_window", "refocus notepad", window="notepad")],
@@ -259,14 +264,21 @@ def _partial_progress_build():
 
 
 def _modal_dialog_build():
-    # The target ("Continue") is hidden behind an alert for the first several
-    # observations, then appears — so the initial click fails, recovery clears
-    # the dialog, and the retried click finds it.
+    # The target ("Continue") is hidden behind an alert that PERSISTS until
+    # something dismisses it — snapshots alone never clear it (reactive
+    # desktop). The initial click fails honestly, the modal_dialog recovery
+    # presses ESC (which actually removes the dialog), and the retried
+    # click lands on the revealed wizard. Recovery is exercised for real,
+    # not dissolved by the passage of observations.
     alert = ["Alert", "OK", "Warning", "Details"]
     session, fakes, events = build_simulated_session(
         plans=[[_step("click", "click Continue", find="Continue", app="wizard")]],
-        screens=[alert, alert, alert, alert, ["Continue", "Home", "Settings", "Next"]],
+        screens=[alert],
         windows=["wizard - window"],
+        reactions={
+            "key:esc": ["Continue", "Home", "Settings", "Next"],
+            "continue": ["Wizard Step 2", "Back", "Next"],
+        },
         healing=[HealingPlan(
             diagnosis="a modal dialog is blocking the control", failure_type="modal_dialog",
             steps=[_step("press", "dismiss the dialog", key="esc")],
@@ -280,6 +292,7 @@ def _focus_loss_build():
     session, fakes, events = build_simulated_session(
         plans=[[_step("type", "type hello", text="hello", app="notepad")]],
         windows=["notepad - window"],
+        reactions={"type:hello": ["Untitled - Notepad", "hello"]},
         healing=[HealingPlan(
             diagnosis="window lost focus", failure_type="focus_lost",
             steps=[_step("focus_window", "refocus notepad", window="notepad")],

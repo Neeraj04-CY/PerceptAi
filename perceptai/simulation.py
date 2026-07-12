@@ -14,20 +14,104 @@ from .contracts import ActionOutcome, Evidence, HealingPlan, PlannerOutput, Step
 from .perception import Perception, TextBlock
 
 
-class FakePerception:
-    """Scriptable perception: pops screens from a queue, repeats the last one."""
+class SimulatedDesktop:
+    """Shared screen state: perception reads it, actions mutate it.
 
-    def __init__(self, screens: list[list[str]] | None = None):
+    Two composable behaviors:
+    - scripted: `screens` advance one entry per snapshot and the last one
+      repeats (legacy — perturbations that resolve themselves over time).
+    - reactive: `reactions` map an action trigger to a new screen. A plain
+      key ("OK") fires when that element is clicked; "key:esc" fires on a
+      key press; "type:hello" fires when that text is typed. Once a
+      reaction fires, its screen PERSISTS (and further reactions still
+      apply) — a modal stays up until something actually dismisses it,
+      and a button changes the screen because it was pressed, not because
+      time passed. This is what lets benches measure cause and effect.
+    """
+
+    # Text-block layout used by FakePerception (block i at this position).
+    _BLOCK_X, _BLOCK_Y, _BLOCK_STEP = 100, 200, 10
+
+    def __init__(self, screens: list[list[str]] | None = None,
+                 reactions: dict[str, list[str]] | None = None):
         self.screens = screens or [["Desktop"]]
-        self.calls = 0
+        self.reactions = {k.casefold(): list(v) for k, v in (reactions or {}).items()}
+        self.snapshot_calls = 0
+        self.transitions: list[str] = []   # triggers that fired, in order
+        self._override: list[str] | None = None  # set once a reaction fires
+
+    # ------------------------------------------------------- perception side
+
+    def screen_for_snapshot(self) -> list[str]:
+        if self._override is not None:
+            self.snapshot_calls += 1
+            return list(self._override)
+        idx = min(self.snapshot_calls, len(self.screens) - 1)
+        self.snapshot_calls += 1
+        return list(self.screens[idx])
+
+    def current_screen(self) -> list[str]:
+        if self._override is not None:
+            return list(self._override)
+        idx = max(0, min(self.snapshot_calls - 1, len(self.screens) - 1))
+        return list(self.screens[idx])
+
+    # ----------------------------------------------------------- action side
+
+    def click_at(self, x: float, y: float) -> None:
+        """Resolve the clicked element from the click coordinates (nearest
+        block on the current screen) and fire its reaction, if declared."""
+        screen = self.current_screen()
+        if not screen or not self.reactions:
+            return
+        nearest = min(
+            range(len(screen)),
+            key=lambda i: abs(x - (self._BLOCK_X + self._BLOCK_STEP * i))
+            + abs(y - (self._BLOCK_Y + self._BLOCK_STEP * i)),
+        )
+        self._fire(screen[nearest].casefold())
+
+    def key_pressed(self, key: str) -> None:
+        self._fire(f"key:{key}".casefold())
+
+    def text_typed(self, text: str) -> None:
+        self._fire(f"type:{text}".casefold())
+
+    def _fire(self, trigger: str) -> None:
+        for name, screen in self.reactions.items():
+            if name.startswith(("key:", "type:")):
+                if name == trigger:
+                    self._override = list(screen)
+                    self.transitions.append(name)
+                    return
+            elif name in trigger:  # clicked element text contains the trigger
+                self._override = list(screen)
+                self.transitions.append(name)
+                return
+
+
+class FakePerception:
+    """Scriptable perception over a SimulatedDesktop (or a plain screens
+    list, which builds a non-reactive desktop internally)."""
+
+    def __init__(self, screens: list[list[str]] | None = None,
+                 desktop: SimulatedDesktop | None = None):
+        self.desktop = desktop or SimulatedDesktop(screens)
         self.latest_screenshot = None
 
+    @property
+    def calls(self) -> int:
+        return self.desktop.snapshot_calls
+
     def _next(self) -> Perception:
-        idx = min(self.calls, len(self.screens) - 1)
-        self.calls += 1
+        screen = self.desktop.screen_for_snapshot()
         blocks = [
-            TextBlock(text=t, confidence=0.9, x=100 + 10 * i, y=200 + 10 * i)
-            for i, t in enumerate(self.screens[idx])
+            TextBlock(
+                text=t, confidence=0.9,
+                x=SimulatedDesktop._BLOCK_X + SimulatedDesktop._BLOCK_STEP * i,
+                y=SimulatedDesktop._BLOCK_Y + SimulatedDesktop._BLOCK_STEP * i,
+            )
+            for i, t in enumerate(screen)
         ]
         return Perception(text_blocks=blocks, mode="fast")
 
@@ -78,7 +162,8 @@ class FakeApps:
 
 
 class FakeActions:
-    def __init__(self):
+    def __init__(self, desktop: SimulatedDesktop | None = None):
+        self.desktop = desktop  # when set, actions drive screen reactions
         self.clicks: list[tuple[int, int]] = []
         self.typed: list[str] = []
         self.pressed: list[str] = []
@@ -86,6 +171,8 @@ class FakeActions:
 
     def click(self, x, y, double=False):
         self.clicks.append((x, y))
+        if self.desktop is not None:
+            self.desktop.click_at(x, y)
         return ActionOutcome(ok=True, data={"x": x, "y": y})
 
     def type_text(self, text):
@@ -93,6 +180,8 @@ class FakeActions:
             self.fail_next_type = False
             return ActionOutcome(ok=False, error="type failed")
         self.typed.append(text)
+        if self.desktop is not None:
+            self.desktop.text_typed(text)
         return ActionOutcome(ok=True, data={"text": text})
 
     def clear_and_type(self, text):
@@ -100,6 +189,8 @@ class FakeActions:
 
     def press(self, key):
         self.pressed.append(key)
+        if self.desktop is not None:
+            self.desktop.key_pressed(key)
         return ActionOutcome(ok=True, data={"key": key})
 
     def scroll(self, x, y, direction="down", amount=3):
@@ -349,21 +440,27 @@ def build_simulated_workforce(
 def build_simulated_session(
     plans=None, screens=None, windows=None, healing=None, extractions=None,
     config=None, goal_analyzer=None, memory=None, workspace=None,
+    reactions=None,
 ):
     """A fully simulated AgentSession plus handles to every fake and the
     captured canonical event stream. GoalAnalyzer and ReportBuilder run
     REAL against FakeLLM — their LLM calls fail, exercising the
-    degrade-gracefully paths (minimal goal, template report)."""
+    degrade-gracefully paths (minimal goal, template report).
+
+    `reactions` makes the desktop reactive (see SimulatedDesktop): actions
+    change the screen, snapshots alone do not — required to measure
+    cause-and-effect behaviors (effect attribution, real recovery)."""
     from .events import EventBus
     from .session import AgentSession
 
     cfg = config or fast_config(**({"workspace_root": workspace} if workspace else {}))
     fake_windows = FakeWindows(windows)
+    desktop = SimulatedDesktop(screens, reactions)
     fakes = {
         "windows": fake_windows,
-        "perception": FakePerception(screens),
+        "perception": FakePerception(desktop=desktop),
         "apps": FakeApps(fake_windows),
-        "actions": FakeActions(),
+        "actions": FakeActions(desktop=desktop),
         "planner": FakePlanner(plans),
         "healer": FakeHealer(healing),
         "memory": memory or FakeMemory(),
@@ -375,4 +472,5 @@ def build_simulated_session(
     session = AgentSession(
         cfg, events=bus, llm=FakeLLM(), goal_analyzer=goal_analyzer, **fakes,
     )
+    fakes["desktop"] = desktop  # test handle; not a session dependency
     return session, fakes, events

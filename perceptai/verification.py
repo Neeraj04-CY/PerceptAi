@@ -25,6 +25,7 @@ from typing import Optional
 from .config import EngineConfig
 from .contracts import (
     ActionType,
+    STATE_CHANGING_ACTIONS,
     StepResult,
     TaskContext,
     VerificationCheck,
@@ -32,16 +33,6 @@ from .contracts import (
     WorldState,
 )
 from .oscontrol import WindowManager
-
-# Actions that are expected to change the observable world.
-_STATE_CHANGING = (
-    ActionType.OPEN_APP,
-    ActionType.NAVIGATE_URL,
-    ActionType.CLICK,
-    ActionType.TYPE,
-    ActionType.CLEAR_TYPE,
-    ActionType.PRESS,
-)
 
 # Confidence is never reported as absolute certainty (matches fusion).
 _CONFIDENCE_CAP = 0.99
@@ -61,6 +52,11 @@ _STRENGTH_EXTRACTION = 0.8
 _STRENGTH_WORLD_CHANGED = 0.6
 _STRENGTH_CRITERION = 0.85
 _STRENGTH_JUDGE_DEGRADED = 0.2
+# Per-step effect attribution is asymmetric: a change observed right after
+# an action is strong causal confirmation; absence of visible change is
+# only a mild contradiction (many legitimate actions render nothing).
+_STRENGTH_EFFECT_CONFIRMED = 0.75
+_STRENGTH_EFFECT_ABSENT = 0.55
 
 
 def _clamp(strength: float) -> float:
@@ -178,7 +174,14 @@ class Verifier:
             )
 
         checks.extend(self._grounded_action_checks(steps))
-        checks.extend(self._world_change_checks(steps, world_before, world_after))
+        effect_checks = self._action_effect_checks(steps)
+        checks.extend(effect_checks)
+        if not effect_checks:
+            # The coarse first-vs-last comparison only when no per-step
+            # attribution exists: causal evidence supersedes correlation
+            # (the world changing over the whole run must not credit a
+            # click for what an app did on its own).
+            checks.extend(self._world_change_checks(steps, world_before, world_after))
         checks.extend(self._judge_completion_criteria(context, steps))
 
         if not checks:
@@ -257,6 +260,37 @@ class Verifier:
         return checks
 
     @staticmethod
+    def _action_effect_checks(steps: list[StepResult]) -> list[VerificationCheck]:
+        """Causal evidence: the runtime attributes each post-action world
+        diff to the step that caused it (StepResult.data['effect']). An
+        observed change right after an action is the strongest verification
+        signal available at zero perception cost — the difference between
+        'we clicked Save' and 'we clicked Save and watched the world
+        respond'. Advisory both ways, asymmetric strength."""
+        checks: list[VerificationCheck] = []
+        for r in steps:
+            if not r.ok:
+                continue
+            effect = r.data.get("effect")
+            if not isinstance(effect, dict):
+                continue
+            changed = bool(effect.get("changed"))
+            summary = str(effect.get("summary") or "")
+            checks.append(
+                VerificationCheck(
+                    name=f"action_effect:{r.step.description[:60]}",
+                    passed=changed,
+                    critical=False,
+                    strength=_STRENGTH_EFFECT_CONFIRMED if changed else _STRENGTH_EFFECT_ABSENT,
+                    detail=summary or (
+                        "world responded to this action" if changed
+                        else "no observable change after this action"
+                    ),
+                )
+            )
+        return checks
+
+    @staticmethod
     def _world_change_checks(
         steps: list[StepResult],
         world_before: Optional[WorldState],
@@ -267,7 +301,7 @@ class Verifier:
         gaps must not fail a task that other checks confirm."""
         if world_before is None or world_after is None:
             return []
-        acted = any(r.step.action in _STATE_CHANGING and r.ok for r in steps)
+        acted = any(r.step.action in STATE_CHANGING_ACTIONS and r.ok for r in steps)
         if not acted:
             return []
         from .world import WorldModel

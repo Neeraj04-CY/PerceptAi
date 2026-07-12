@@ -537,6 +537,19 @@ class ActionType(str, Enum):
     READ_SCREEN = "read_screen"
 
 
+# Actions expected to change the observable world. One source of truth:
+# the runtime attributes post-action world diffs to these steps, and the
+# verifier derives world-change checks from them.
+STATE_CHANGING_ACTIONS = (
+    ActionType.OPEN_APP,
+    ActionType.NAVIGATE_URL,
+    ActionType.CLICK,
+    ActionType.TYPE,
+    ActionType.CLEAR_TYPE,
+    ActionType.PRESS,
+)
+
+
 # Planner dict keys that carry step parameters.
 _STEP_PARAM_KEYS = ("app", "url", "window", "find", "text", "key", "wait", "direction")
 
