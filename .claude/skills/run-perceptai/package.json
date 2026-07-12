@@ -1,0 +1,9 @@
+{
+  "name": "run-perceptai-driver",
+  "private": true,
+  "type": "module",
+  "description": "Agent harness for driving the PerceptAI platform (API + dashboard).",
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}
