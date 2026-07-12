@@ -108,7 +108,7 @@ class ControlPlane:
         self.approval_requests: list = []
 
     # execution transport
-    def heartbeat(self, sid): self.heartbeats.append(sid)
+    def heartbeat(self, sid, readiness=None): self.heartbeats.append(sid)
     def claim(self):
         if self._served:
             return None
@@ -138,6 +138,12 @@ def _factory(tmp_path):
     return make
 
 
+def _ready():
+    """Injected so these tests never consult the host's real desktop."""
+    from runner.readiness import READY, Readiness
+    return Readiness(state=READY, detail="simulated host")
+
+
 def test_worker_honors_remote_pause_then_resume(tmp_path):
     plane = ControlPlane(_signed(), state="paused")
     threading.Timer(0.1, lambda: setattr(plane, "state", "running")).start()
@@ -145,6 +151,7 @@ def test_worker_honors_remote_pause_then_resume(tmp_path):
     cfg = RunnerConfig(plane_url="x", token="rk", signing_key=KEY,
                        event_flush_interval_s=0.02)
     worker = Worker(plane, cfg, session_factory=_factory(tmp_path),
+                    readiness_probe=_ready,
                     control_factory=lambda sid: RemoteControlChannel(plane, sid,
                                                                      poll_interval_s=0.02))
     report = worker.execute_work_order(_signed())
@@ -161,6 +168,7 @@ def test_worker_honors_remote_stop(tmp_path):
     cfg = RunnerConfig(plane_url="x", token="rk", signing_key=KEY,
                        event_flush_interval_s=0.02)
     worker = Worker(plane, cfg, session_factory=_factory(tmp_path),
+                    readiness_probe=_ready,
                     control_factory=lambda sid: RemoteControlChannel(plane, sid,
                                                                      poll_interval_s=0.02))
     report = worker.execute_work_order(_signed())

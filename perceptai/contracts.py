@@ -190,6 +190,11 @@ class WorldState:
     screenshot_path: str = ""
     providers: list[ProviderReport] = field(default_factory=list)
     confidence: float = 0.0  # overall perception confidence, 0..1
+    # Chapter IX: what the deterministic scanner found in this screen's UNTRUSTED
+    # content. It rides the world state (rather than hiding inside a prompt) so
+    # it reaches the risk gate, the event stream and the auditor. Typed loosely
+    # to keep contracts.py free of an injection.py import cycle.
+    injection: Optional[Any] = None
 
     @property
     def screen_text(self) -> str:
@@ -713,6 +718,93 @@ class TaskContext:
     @property
     def latest_extraction(self) -> str:
         return self.evidence[-1].value if self.evidence else ""
+
+
+class CritiqueVerdict(str, Enum):
+    """Verdict on a PROPOSED plan, before any action touches the screen."""
+    ACCEPT = "accept"
+    REJECT = "reject"
+
+
+@dataclass
+class CriticFinding:
+    """One concrete objection to a proposed plan. Explainable by construction:
+    an operator (and an auditor) can read exactly why the agent refused to act."""
+    kind: str        # ungrounded | ambiguous_target | weak_grounding |
+                     # unsafe_action | redundant | missing_context | semantic
+    severity: str    # low | medium | high
+    detail: str
+    step_index: int = -1   # -1 = plan-level
+
+    @property
+    def blocking(self) -> bool:
+        return self.severity == "high"
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, "severity": self.severity,
+                "detail": self.detail, "step_index": self.step_index}
+
+
+@dataclass
+class StepCritique:
+    """How well ONE proposed step is grounded in the live world."""
+    index: int
+    description: str
+    action: str = ""
+    target: str = ""
+    grounded: bool = True
+    match_score: float = 0.0    # best candidate's score
+    margin: float = 1.0         # best - runner-up: LOW margin means AMBIGUOUS
+    runner_up: str = ""
+    findings: list[CriticFinding] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"index": self.index, "description": self.description,
+                "action": self.action, "target": self.target,
+                "grounded": self.grounded, "match_score": round(self.match_score, 3),
+                "margin": round(self.margin, 3), "runner_up": self.runner_up,
+                "findings": [f.to_dict() for f in self.findings]}
+
+
+@dataclass
+class PlanCritique:
+    """The critic's verdict on a whole plan. The engine executes ONLY an
+    accepted plan — verification moves BEFORE the action, not after it."""
+    verdict: CritiqueVerdict = CritiqueVerdict.ACCEPT
+    score: float = 1.0
+    steps: list[StepCritique] = field(default_factory=list)
+    findings: list[CriticFinding] = field(default_factory=list)
+    summary: str = ""
+    escalated: bool = False   # did the adversarial LLM pass run
+    model: str = ""
+
+    @property
+    def accepted(self) -> bool:
+        return self.verdict == CritiqueVerdict.ACCEPT
+
+    @property
+    def blocking(self) -> list[CriticFinding]:
+        return [f for f in self.findings if f.blocking]
+
+    def feedback(self) -> str:
+        """What the planner is told so its next attempt converges."""
+        if not self.findings:
+            return ""
+        lines = "\n".join(f"- {f.detail}" for f in self.findings[:6])
+        return (
+            "Your previous plan was REJECTED before execution for these reasons:\n"
+            f"{lines}\n"
+            "Produce a corrected plan that only targets elements actually visible "
+            "on screen, names them unambiguously (use the exact full label), and "
+            "never repeats an action that already succeeded."
+        )
+
+    def to_dict(self) -> dict:
+        return {"verdict": self.verdict.value, "score": round(self.score, 3),
+                "summary": self.summary, "escalated": self.escalated,
+                "model": self.model,
+                "findings": [f.to_dict() for f in self.findings],
+                "steps": [s.to_dict() for s in self.steps]}
 
 
 @dataclass

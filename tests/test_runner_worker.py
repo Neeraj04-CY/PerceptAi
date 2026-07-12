@@ -36,6 +36,13 @@ def _session_factory(tmp_path):
     return factory
 
 
+def _ready():
+    """Session truth is an injected seam precisely so unit tests never depend on
+    the host's real desktop (a headless CI box is not 'ready')."""
+    from runner.readiness import READY, Readiness
+    return Readiness(state=READY, detail="simulated host")
+
+
 def _signed(instruction="open notepad and type hello world", session_id="sess-1"):
     order = {"session_id": session_id, "instruction": instruction, "mode": "task",
              "org_id": "o", "workspace_id": None, "approval_risk_threshold": "",
@@ -53,7 +60,7 @@ class FakePlane:
         self.events: list[dict] = []
         self.result = None
 
-    def heartbeat(self, current_session_id):
+    def heartbeat(self, current_session_id, readiness=None):
         self.heartbeats.append(current_session_id)
 
     def claim(self):
@@ -78,7 +85,8 @@ def _cfg():
 
 def test_executes_signed_order_and_reports_result(tmp_path):
     plane = FakePlane()
-    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path))
+    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path),
+                    readiness_probe=_ready)
     report = worker.execute_work_order(_signed())
 
     assert report["status"] == "completed"
@@ -90,7 +98,8 @@ def test_executes_signed_order_and_reports_result(tmp_path):
 
 def test_forwards_canonical_wire_v1_events(tmp_path):
     plane = FakePlane()
-    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path))
+    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path),
+                    readiness_probe=_ready)
     worker.execute_work_order(_signed())
 
     assert plane.events, "events must be forwarded to the plane"
@@ -106,7 +115,8 @@ def test_forwards_canonical_wire_v1_events(tmp_path):
 
 def test_rejects_tampered_order_without_executing(tmp_path):
     plane = FakePlane()
-    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path))
+    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path),
+                    readiness_probe=_ready)
     signed = _signed()
     signed["work_order"]["instruction"] = "delete everything"  # tamper after signing
 
@@ -121,7 +131,8 @@ def test_rejects_tampered_order_without_executing(tmp_path):
 
 def test_run_forever_claims_executes_and_heartbeats(tmp_path):
     plane = FakePlane(_signed())
-    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path))
+    worker = Worker(plane, _cfg(), session_factory=_session_factory(tmp_path),
+                    readiness_probe=_ready)
     t = threading.Thread(target=worker.run_forever, daemon=True)
     t.start()
 

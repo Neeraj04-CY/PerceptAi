@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import execution_control as ctrl
@@ -35,6 +35,7 @@ class RegisterRunnerRequest(BaseModel):
 
 class HeartbeatRequest(BaseModel):
     current_session_id: Optional[str] = None
+    readiness: Optional[dict] = None  # session truth reported by the host
 
 
 class DispatchRequest(BaseModel):
@@ -65,9 +66,39 @@ class SecretRequestBody(BaseModel):
     name: str
 
 
+class EnrollRequest(BaseModel):
+    public_key: str  # the runner's ed25519 public key; the private half never leaves it
+
+
 def get_current_runner(x_runner_token: str = Header(..., alias="X-Runner-Token")) -> dict:
-    """Resolve the runner-scoped token to its row (401 on failure)."""
+    """Resolve the runner-scoped token to its row (401 on failure).
+
+    Bootstrap identity only. Enrolled runners must ALSO sign each request —
+    see `verified_runner`, which every state-changing endpoint depends on.
+    """
     return runner_svc.authenticate_runner(get_service_db(), x_runner_token)
+
+
+async def verified_runner(
+    request: Request,
+    runner: dict = Depends(get_current_runner),
+    x_runner_signature: Optional[str] = Header(None, alias="X-Runner-Signature"),
+    x_runner_timestamp: Optional[str] = Header(None, alias="X-Runner-Timestamp"),
+    x_runner_nonce: Optional[str] = Header(None, alias="X-Runner-Nonce"),
+) -> dict:
+    """Cryptographic identity: the request must be signed by the private key
+    whose public half this runner enrolled. Binds verb, path, body and time, so
+    a captured request cannot be replayed elsewhere, mutated, or replayed late.
+
+    Legacy (un-enrolled) runners pass on the bearer token alone — the fleet
+    upgrades without an outage, and a runner that HAS a key can never fall back.
+    """
+    body = await request.body()
+    runner_svc.verify_runner_request(
+        runner, method=request.method, path=request.url.path, body=body,
+        timestamp=x_runner_timestamp or "", nonce=x_runner_nonce or "",
+        signature=x_runner_signature or "")
+    return runner
 
 
 # ---------------------------------------------------------- operator (JWT)
@@ -118,26 +149,55 @@ async def dispatch_run(body: DispatchRequest,
 
 # ------------------------------------------------------- runner (X-Runner-Token)
 
+@router.post("/enroll")
+async def enroll(body: EnrollRequest, runner: dict = Depends(get_current_runner)):
+    """Publish this runner's public key, once (trust on first use).
+
+    Deliberately authenticated by the BOOTSTRAP token rather than a signature —
+    the runner has no enrolled identity yet, which is precisely what this call
+    establishes. It is refused if a key already exists, so a leaked token cannot
+    silently replace a live runner's identity; rotation is an explicit,
+    audited re-registration.
+    """
+    db = get_service_db()
+    result = runner_svc.enroll_runner(db, runner, body.public_key.strip())
+    from orgs import record_audit
+    record_audit(db, runner["org_id"], None, f"runner:{runner['name']}",
+                 "runner.enrolled", target=f"runner:{runner['id']}",
+                 detail={"algorithm": result["algorithm"]})
+    return result
+
+
 @router.post("/heartbeat")
-async def heartbeat(body: HeartbeatRequest, runner: dict = Depends(get_current_runner)):
-    """Liveness ping; renews the lease on the runner's current session."""
+async def heartbeat(body: HeartbeatRequest, runner: dict = Depends(verified_runner)):
+    """Liveness ping + session truth; renews the lease on the current session."""
     runner_svc.record_heartbeat(get_service_db(), runner["id"],
-                                current_session_id=body.current_session_id)
+                                current_session_id=body.current_session_id,
+                                readiness=body.readiness)
     return {"ok": True, "lease_seconds": config.RUNNER_LEASE_SECONDS}
 
 
 @router.post("/claim")
-async def claim_work(runner: dict = Depends(get_current_runner)):
+async def claim_work(runner: dict = Depends(verified_runner)):
     """Long-poll claim: returns a signed work order, or an empty 204 when the
-    queue is empty. Atomic — two runners never claim the same session."""
+    queue is empty. Atomic — two runners never claim the same session.
+
+    Defence in depth on session truth: a runner whose last heartbeat said its
+    desktop is unusable gets no work, even if its own claim gate were bypassed
+    or stale. The plane never dispatches a real-screen task to a locked screen.
+    """
     db = get_service_db()
+    readiness = runner.get("readiness") or {}
+    if readiness and not readiness.get("can_execute", True):
+        return Response(status_code=204)
     # Lazy recovery: reclaim any sessions whose runner went away, so stale work
     # re-enters the queue (or dead-letters) before we hand out new work.
     runner_svc.reclaim_stale(db)
     session = runner_svc.claim_next(db, runner)
     if session is None:
         return Response(status_code=204)
-    runner_svc.record_heartbeat(db, runner["id"], current_session_id=session["id"])
+    runner_svc.record_heartbeat(db, runner["id"], current_session_id=session["id"],
+                                readiness=readiness or None)
     return runner_svc.issue_work_order(db, runner, session)
 
 
@@ -155,7 +215,7 @@ def _owned_session(db, session_id: str, runner: dict) -> dict:
 
 @router.post("/executions/{session_id}/events")
 async def ingest_execution_events(session_id: str, body: EventsBatch,
-                                  runner: dict = Depends(get_current_runner)):
+                                  runner: dict = Depends(verified_runner)):
     """Persist a batch of wire-v1 events from the runner (idempotent on seq).
     Returns the resume point so a reconnecting runner never re-sends. First
     batch flips the claim to 'running'."""
@@ -173,7 +233,7 @@ async def ingest_execution_events(session_id: str, body: EventsBatch,
 
 @router.post("/executions/{session_id}/result")
 async def report_execution_result(session_id: str, body: ResultReport,
-                                  runner: dict = Depends(get_current_runner)):
+                                  runner: dict = Depends(verified_runner)):
     """Terminal report: persist the TaskResult, close out the session, free
     the runner, and count usage. Any trailing events are flushed idempotently."""
     db = get_service_db()
@@ -209,7 +269,7 @@ async def report_execution_result(session_id: str, body: ResultReport,
 
 @router.get("/executions/{session_id}/control")
 async def read_execution_control(session_id: str,
-                                 runner: dict = Depends(get_current_runner)):
+                                 runner: dict = Depends(verified_runner)):
     """The runner reads durable control (state + any approval decision) that
     the operator set on the plane. This is the network side of the Sprint 3
     ControlChannel — the engine is unaware it is crossing a wire."""
@@ -222,7 +282,7 @@ async def read_execution_control(session_id: str,
 
 @router.post("/executions/{session_id}/secrets")
 async def fetch_execution_secret(session_id: str, body: SecretRequestBody,
-                                 runner: dict = Depends(get_current_runner)):
+                                 runner: dict = Depends(verified_runner)):
     """Return one secret VALUE to the authorized runner over TLS — the ONE
     value-carrying surface. Authorized (this runner owns this session) and
     scoped (the session's workspace vault). The value is decrypted for this
@@ -244,7 +304,7 @@ async def fetch_execution_secret(session_id: str, body: SecretRequestBody,
 
 @router.post("/executions/{session_id}/approval-request")
 async def post_execution_approval_request(session_id: str, body: ApprovalRequestBody,
-                                          runner: dict = Depends(get_current_runner)):
+                                          runner: dict = Depends(verified_runner)):
     """The runtime raised a risk-gated approval; record it durably so the
     operator's decision can be matched back to it."""
     db = get_service_db()

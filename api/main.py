@@ -132,6 +132,10 @@ async def execute_stream(
     # are decrypted on demand and zeroized when the run ends.
     from secrets_resolver import build_local_resolver
     secrets = build_local_resolver(db, scope.get("org_id"), scope.get("workspace_id"))
+    # Data egress: what may leave this machine, and to which model (policy as
+    # data on the workspace). Enforced at the engine's single LLM checkpoint.
+    from runners import workspace_egress_policy
+    egress = workspace_egress_policy(db, scope.get("workspace_id"))
 
     async def generate():
         yield sse({"type": "session_id", "session_id": session_id})
@@ -144,6 +148,7 @@ async def execute_stream(
         stream = execute_task_stream(
             body.instruction, control=control,
             approval_risk_threshold=approval_threshold, secrets=secrets,
+            egress=egress,
         )
         async for event in athread_iter(stream):
             if event is None:

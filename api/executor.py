@@ -58,7 +58,7 @@ def _engine_config(EngineConfig):
 
 
 def _make_session(AgentSession, EngineConfig, *, control=None, overrides=None,
-                  secrets=None):
+                  secrets=None, egress=None):
     global _last_session
     config = _engine_config(EngineConfig)
     for key, value in (overrides or {}).items():
@@ -69,6 +69,11 @@ def _make_session(AgentSession, EngineConfig, *, control=None, overrides=None,
         kwargs["control"] = control
     if secrets is not None:
         kwargs["secrets"] = secrets
+    if egress is not None:
+        # Workspace data-egress policy (as data), enforced at the engine's ONE
+        # LLM checkpoint — identically for local and remote runs.
+        from perceptai.egress import EgressGuard, EgressPolicy
+        kwargs["egress"] = EgressGuard(EgressPolicy.from_dict(egress))
     session = AgentSession(config, **kwargs)
     with _registry_lock:
         _last_session = session
@@ -137,15 +142,17 @@ def execute_task(instruction: str) -> Tuple[Optional[object], Optional[str]]:
 
 def execute_task_stream(instruction: str, *, control=None,
                         approval_risk_threshold: str = "",
-                        secrets=None) -> Generator[dict, None, None]:
+                        secrets=None, egress=None) -> Generator[dict, None, None]:
     """Run one task, yielding dashboard-format SSE dicts as events happen.
 
     `control` is an optional perceptai ControlChannel (from the API's control
     registry) that makes the run pausable/stoppable and gates risky actions on
     approval; `approval_risk_threshold` is the workspace risk policy (as data)
-    that decides when approval is required. The final yielded item has type
-    "_result" carrying the full TaskResult plus the captured canonical events;
-    the HTTP layer persists both and must not forward them to clients.
+    that decides when approval is required; `egress` is the workspace's
+    data-egress policy (as data), governing what may leave this machine. The
+    final yielded item has type "_result" carrying the full TaskResult plus the
+    captured canonical events; the HTTP layer persists both and must not
+    forward them to clients.
     """
     AgentSession, EngineConfig, to_legacy_sse, legacy_steps, err = _load_engine()
     if err:
@@ -153,7 +160,7 @@ def execute_task_stream(instruction: str, *, control=None,
         return
 
     session = _make_session(
-        AgentSession, EngineConfig, control=control, secrets=secrets,
+        AgentSession, EngineConfig, control=control, secrets=secrets, egress=egress,
         overrides={"approval_risk_threshold": approval_risk_threshold},
     )
     for item in _relay(session.events, lambda: session.run(instruction),

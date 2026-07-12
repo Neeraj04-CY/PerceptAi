@@ -53,7 +53,9 @@ export default function RunnersPage() {
     }
   };
 
-  const online = runners?.filter((r) => r.status !== "offline").length ?? 0;
+  // "Available" is the honest count: can actually take work now. A locked or
+  // logged-out host is live but not available — session truth, not a stall.
+  const online = runners?.filter((r) => r.status === "online" || r.status === "busy").length ?? 0;
 
   return (
     <div className="space-y-6">
@@ -97,9 +99,12 @@ export default function RunnersPage() {
                 <Server size={15} className="text-white/45 shrink-0" />
                 <span className="text-[13.5px] text-white truncate">{r.name}</span>
               </div>
-              <StatusBadge status={r.status} />
-              <div className="font-mono text-[11.5px] text-white/55 truncate">
-                {capabilitySummary(r.capabilities)}
+              <StatusBadge status={r.status} readiness={r.readiness} />
+              <div className="font-mono text-[11.5px] text-white/55 truncate"
+                   title={r.readiness?.detail || undefined}>
+                {r.status !== "online" && r.status !== "busy" && r.status !== "offline" && r.readiness?.detail
+                  ? r.readiness.detail
+                  : capabilitySummary(r.capabilities)}
               </div>
               <div className="font-mono text-[12px] text-white/45">
                 {r.last_heartbeat_at ? timeAgo(r.last_heartbeat_at) : "never"}
@@ -193,16 +198,34 @@ function CopyBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: ApiRunner["status"] }) {
-  const look = {
-    online: { c: "text-accent border-accent/30 bg-accent/10", label: "online" },
-    busy: { c: "text-amber-200 border-amber-400/30 bg-amber-400/10", label: "busy" },
-    offline: { c: "text-white/40 border-white/15 bg-white/5", label: "offline" },
-  }[status];
+function StatusBadge({ status, readiness }: {
+  status: ApiRunner["status"]; readiness?: ApiRunner["readiness"];
+}) {
+  const green = "text-accent border-accent/30 bg-accent/10";
+  const amber = "text-amber-200 border-amber-400/30 bg-amber-400/10";
+  const grey = "text-white/40 border-white/15 bg-white/5";
+  // Session truth: a live-but-unusable host is amber, not green (it cannot take
+  // work) and not grey (it is right there, heartbeating). Its own explanation
+  // is the tooltip — no ambiguous state.
+  const look: Record<string, { c: string; label: string }> = {
+    online: { c: green, label: "online" },
+    busy: { c: amber, label: "busy" },
+    offline: { c: grey, label: "offline" },
+    locked: { c: amber, label: "locked" },
+    logged_out: { c: amber, label: "logged out" },
+    screen_unavailable: { c: amber, label: "no screen" },
+    permission_denied: { c: amber, label: "no access" },
+    network_unavailable: { c: grey, label: "no plane" },
+    unknown: { c: grey, label: "unknown" },
+  };
+  const l = look[status] ?? look.unknown;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-md border px-2 h-6 font-mono text-[10px] uppercase tracking-[0.14em] w-fit", look.c)}>
+    <span
+      title={readiness?.detail ? `${readiness.detail}${readiness.fix ? ` — fix: ${readiness.fix}` : ""}` : undefined}
+      className={cn("inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 h-6 font-mono text-[10px] uppercase tracking-[0.14em] w-fit", l.c)}
+    >
       <Circle size={7} className="fill-current" />
-      {look.label}
+      {l.label}
     </span>
   );
 }

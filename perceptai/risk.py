@@ -54,6 +54,7 @@ _KIND_SUMMARY = {
     "credentials": "This action involves credentials or secrets",
     "communication": "This action sends or publishes content",
     "low_confidence": "Acting while perception confidence is low",
+    "prompt_injection": "The screen is attempting to instruct the agent",
 }
 
 
@@ -97,6 +98,21 @@ class RiskAssessor:
                 summary=_KIND_SUMMARY["low_confidence"],
                 detail=f"world confidence {world.confidence:.2f} < "
                        f"{self._config.low_confidence_threshold:.2f}",
+            ))
+
+        # Chapter IX — capability confinement. The screen this action will touch
+        # is trying to instruct the agent. Detection is not the barrier (the
+        # fence and the frozen goal are), but a hostile screen makes every
+        # consequential action worth a human's attention: content attempting
+        # goal replacement or credential theft raises the action to HIGH so the
+        # workspace's existing approval threshold gates it.
+        report = getattr(world, "injection", None) if world is not None else None
+        if report is not None and report.tainted:
+            flags.append(RiskFlag(
+                kind="prompt_injection",
+                level=RiskLevel.HIGH if report.critical else RiskLevel.MEDIUM,
+                summary=_KIND_SUMMARY["prompt_injection"],
+                detail=report.summary(),
             ))
         return flags
 

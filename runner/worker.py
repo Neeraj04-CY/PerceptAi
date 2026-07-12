@@ -27,7 +27,8 @@ from .config import RunnerConfig
 class ControlPlane(Protocol):
     """The transport surface the worker needs. The HTTP client implements it;
     tests inject a fake."""
-    def heartbeat(self, current_session_id: Optional[str]) -> None: ...
+    def heartbeat(self, current_session_id: Optional[str],
+                  readiness: Optional[dict] = None) -> None: ...
     def claim(self) -> Optional[dict]: ...  # signed work order, or None
     def post_events(self, session_id: str, events: list[dict]) -> None: ...
     def post_result(self, session_id: str, report: dict) -> None: ...
@@ -44,6 +45,12 @@ ControlFactory = Callable[[str], Any]
 # Builds the SecretResolver for a session, given the signed work order (so it
 # can read the available secret names). Injects the remote resolver.
 SecretFactory = Callable[[str, dict], Any]
+# Observes this host's desktop readiness (Chapter IX). Injected so the loop is
+# tested against every state without a real (or locked) desktop.
+ReadinessProbe = Callable[[], Any]
+# Builds the EgressPolicy for a run from the signed work order (which carries
+# the workspace's policy). Injected; defaults to the engine's own policy.
+EgressFactory = Callable[[dict], Any]
 
 
 class EventPump:
@@ -114,26 +121,63 @@ class Worker:
     def __init__(self, client: ControlPlane, config: RunnerConfig,
                  session_factory: Optional[SessionFactory] = None,
                  control_factory: Optional[ControlFactory] = None,
-                 secrets_factory: Optional[SecretFactory] = None):
+                 secrets_factory: Optional[SecretFactory] = None,
+                 readiness_probe: Optional[ReadinessProbe] = None,
+                 egress_factory: Optional[EgressFactory] = None,
+                 identity: Optional[Any] = None):
         self._client = client
         self._config = config
+        # Cryptographic identity (Chapter IX). None = legacy HMAC runner.
+        self._identity = identity
         self._session_factory = session_factory or _default_session_factory
         self._control_factory = control_factory
         self._secrets_factory = secrets_factory
+        self._egress_factory = egress_factory
+        self._readiness_probe = readiness_probe or _default_readiness_probe
         self._current_session_id: Optional[str] = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
 
     # ------------------------------------------------------------ lifecycle
 
+    def _verify(self, order: dict, signature: str) -> bool:
+        """Is this work order really from the plane?
+
+        An enrolled runner verifies with the plane's PUBLIC key and therefore
+        holds nothing that could forge an order. A legacy runner falls back to
+        the symmetric per-runner HMAC. Never trust an unsigned order.
+        """
+        if self._identity is not None and self._identity.plane_public_key:
+            return self._identity.verify_work_order(order, signature)
+        return verify_work_order(self._config.signing_key, order, signature)
+
+    def readiness(self):
+        """This host's desktop truth right now. Never raises."""
+        try:
+            return self._readiness_probe()
+        except Exception:
+            from .readiness import UNKNOWN, Readiness
+            return Readiness(state=UNKNOWN, detail="readiness probe failed")
+
     def run_forever(self) -> None:
         """Heartbeat on a side thread; claim/execute on the main thread until
         stopped. Bounded backoff keeps an idle runner cheap and a disconnected
-        one from hammering the plane."""
+        one from hammering the plane.
+
+        A runner that cannot drive its desktop NEVER claims work: the queue
+        holds the run for a healthy runner rather than burning an attempt on a
+        lock screen. The readiness state is heartbeat to the plane, so the gap
+        is visible in the fleet view instead of looking like a silent stall.
+        """
         hb = threading.Thread(target=self._heartbeat_loop, daemon=True)
         hb.start()
         backoff = self._config.poll_interval_s
         while not self._stop.is_set():
+            if not self.readiness().can_execute:
+                # Not ready: don't claim, don't hammer. The heartbeat is already
+                # telling the plane exactly which state this host is in and why.
+                self._stop.wait(self._config.readiness_recheck_s)
+                continue
             try:
                 signed = self._client.claim()
             except Exception:
@@ -156,7 +200,7 @@ class Worker:
             with self._lock:
                 sid = self._current_session_id
             try:
-                self._client.heartbeat(sid)
+                self._client.heartbeat(sid, self.readiness().to_dict())
             except Exception:
                 pass  # a missed heartbeat is recoverable; the loop retries
             self._stop.wait(self._config.heartbeat_interval_s)
@@ -171,10 +215,23 @@ class Worker:
         signature = signed.get("signature") or ""
         session_id = str(order.get("session_id") or "")
 
-        if not verify_work_order(self._config.signing_key, order, signature):
+        if not self._verify(order, signature):
             report = {"status": "failed", "result": None, "steps": [],
                       "execution_time": 0.0,
                       "error": "work order signature verification failed", "events": []}
+            if session_id:
+                self._safe_post_result(session_id, report)
+            return report
+
+        # The desktop can die between the claim and the first action. Refuse
+        # honestly rather than open a session against an unusable environment.
+        readiness = self.readiness()
+        if not readiness.can_execute:
+            report = {"status": "failed", "result": None, "steps": [],
+                      "execution_time": 0.0,
+                      "error": f"execution environment unavailable ({readiness.state}): "
+                               f"{readiness.detail}",
+                      "readiness": readiness.to_dict(), "events": []}
             if session_id:
                 self._safe_post_result(session_id, report)
             return report
@@ -190,6 +247,8 @@ class Worker:
     def _run(self, session_id: str, instruction: str, order: dict) -> dict:
         from perceptai.streaming import legacy_steps
 
+        from .control import ReadinessGuard
+
         session = self._session_factory(instruction)
         # Apply the workspace risk policy carried in the signed order, so a
         # remote run gates on approval exactly like a local one (the shared
@@ -204,6 +263,22 @@ class Worker:
             # Resolve secrets over the plane; values are fetched on demand and
             # zeroized when the session's run() finally purges.
             session.secrets = self._secrets_factory(session_id, order)
+        # Workspace data-egress policy travels INSIDE the signed order, so it
+        # cannot be downgraded in transit. The engine consults it before any
+        # observation leaves this machine.
+        egress = (self._egress_factory(order) if self._egress_factory is not None
+                  else _default_egress(order))
+        if egress is not None:
+            session.egress = egress
+            if hasattr(session.llm, "egress"):
+                session.llm.egress = egress
+
+        # Session truth, enforced for the whole run: if the desktop is lost the
+        # engine's next control checkpoint stops it, through the SAME channel
+        # an operator's stop button uses. No engine change, no second seam.
+        guard = ReadinessGuard(session.control, self.readiness,
+                               min_interval_s=self._config.readiness_probe_interval_s)
+        session.control = guard
 
         pump = EventPump(
             session.events,
@@ -226,6 +301,15 @@ class Worker:
                       "execution_time": 0.0, "error": str(e), "events": []}
         finally:
             pump.stop()
+
+        # A run the environment killed must say so, in the words an operator
+        # will read at 7am — never "0 steps, unverified" with no reason.
+        lost = guard.lost_readiness
+        if lost is not None:
+            report["status"] = "failed"
+            report["readiness"] = lost.to_dict()
+            report["error"] = (f"execution environment became unavailable mid-run "
+                               f"({lost.state}): {lost.detail}")
 
         self._safe_post_result(session_id, report)
         return report
@@ -250,3 +334,16 @@ def _default_session_factory(instruction: str):
     """Production: one real AgentSession per work order (one runtime, no fork)."""
     from perceptai import AgentSession, EngineConfig
     return AgentSession(EngineConfig.from_env())
+
+
+def _default_readiness_probe():
+    """Production: observe this Windows host's real desktop state."""
+    from .readiness import probe
+    return probe()
+
+
+def _default_egress(order: dict):
+    """Build the egress guard from the workspace policy carried in the SIGNED
+    work order. No policy in the order means the documented default (allow)."""
+    from perceptai.egress import EgressGuard, EgressPolicy
+    return EgressGuard(EgressPolicy.from_dict(order.get("egress_policy") or {}))

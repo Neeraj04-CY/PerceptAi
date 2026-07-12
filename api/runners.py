@@ -18,7 +18,16 @@ from typing import Any, Optional
 from fastapi import HTTPException
 
 from config import config
-from runner_signing import derive_runner_key, sign_work_order
+from runner_signing import (
+    ED25519,
+    HMAC_SHA256,
+    derive_runner_key,
+    private_key_from_seed,
+    public_key_for,
+    sign_work_order,
+    sign_work_order_ed25519,
+    verify_request,
+)
 
 RUNNER_HINT = ("runner tables unavailable — apply "
                "api/migrations/003_runners.sql to this database")
@@ -50,9 +59,18 @@ def hash_token(token: str) -> str:
 
 
 def derive_status(last_heartbeat_at: Optional[str], current_session_id: Optional[str],
-                  now: Optional[datetime] = None) -> str:
-    """offline | online | busy — derived, never a stored source of truth that
-    can drift. A runner mid-execution is busy; a fresh heartbeat is online."""
+                  now: Optional[datetime] = None,
+                  readiness: Optional[dict] = None) -> str:
+    """offline | online | busy | <readiness state> — derived, never a stored
+    source of truth that can drift.
+
+    Two facts, two owners, one displayed state: liveness and the claim are the
+    plane's facts (heartbeat, current_session_id); whether the desktop can be
+    driven is the HOST's fact, reported on the heartbeat. A live runner whose
+    workstation is locked is neither 'online' (it cannot take work) nor
+    'offline' (it is right there, healthy, waiting) — it is 'locked', and
+    saying so is the whole point of session truth.
+    """
     now = now or utc_now()
     if not last_heartbeat_at:
         return "offline"
@@ -64,11 +82,22 @@ def derive_status(last_heartbeat_at: Optional[str], current_session_id: Optional
         return "offline"
     if (now - hb).total_seconds() > OFFLINE_AFTER_S:
         return "offline"
-    return "busy" if current_session_id else "online"
+    if current_session_id:
+        return "busy"  # a claim outranks readiness: it IS executing
+    if readiness and not readiness.get("can_execute", True):
+        return str(readiness.get("state") or "unknown")
+    return "online"
+
+
+def is_available(status: str) -> bool:
+    """Can this runner take work right now? The ONE definition — used by
+    dispatch's fleet checks so 'no runner is online' means what it says."""
+    return status in ("online", "busy")
 
 
 def build_work_order(session: dict[str, Any], *, approval_risk_threshold: str = "",
                      available_secrets: Optional[list[str]] = None,
+                     egress_policy: Optional[dict] = None,
                      issued_at: Optional[datetime] = None,
                      ttl_seconds: int = 300) -> dict[str, Any]:
     """The signed payload a runner executes. Transport-agnostic and minimal:
@@ -89,21 +118,48 @@ def build_work_order(session: dict[str, Any], *, approval_risk_threshold: str = 
         "workspace_id": str(session["workspace_id"]) if session.get("workspace_id") else None,
         "approval_risk_threshold": approval_risk_threshold or "",
         "available_secrets": sorted(available_secrets or []),
+        # Signed, so a runner cannot be tricked into a laxer egress policy than
+        # its workspace declared: tampering invalidates the whole order.
+        "egress_policy": egress_policy or {},
         "issued_at": _iso(issued_at),
         "expires_at": _iso(issued_at + timedelta(seconds=ttl_seconds)),
         "nonce": _secrets.token_hex(8),
     }
 
 
-def sign_for_runner(runner_id: str, work_order: dict[str, Any]) -> dict[str, Any]:
-    """Wrap a work order with its per-runner signature for delivery."""
-    key = derive_runner_key(config.RUNNER_SIGNING_KEY, str(runner_id))
-    return {"work_order": work_order, "signature": sign_work_order(key, work_order)}
+def plane_private_key() -> str:
+    """The plane's Ed25519 identity, derived from the secret it already holds.
+    A dedicated KMS-held key is the documented next step and swaps in here."""
+    return private_key_from_seed(config.RUNNER_SIGNING_KEY)
+
+
+def plane_public_key() -> str:
+    """Safe to publish: runners verify work orders with it."""
+    return public_key_for(plane_private_key())
+
+
+def sign_for_runner(runner_id: str, work_order: dict[str, Any],
+                    key_algorithm: str = HMAC_SHA256) -> dict[str, Any]:
+    """Wrap a work order with its signature for delivery.
+
+    An enrolled runner gets an Ed25519 signature from the PLANE's private key —
+    it can verify authenticity without holding any secret capable of forging
+    work. A legacy runner keeps the symmetric per-runner HMAC until it enrolls.
+    """
+    if key_algorithm == ED25519:
+        signature = sign_work_order_ed25519(plane_private_key(), work_order)
+    else:
+        key = derive_runner_key(config.RUNNER_SIGNING_KEY, str(runner_id))
+        signature = sign_work_order(key, work_order)
+    return {"work_order": work_order, "signature": signature,
+            "algorithm": key_algorithm}
 
 
 def public_runner(row: dict[str, Any], now: Optional[datetime] = None) -> dict[str, Any]:
-    """A runner row shaped for the API — never leaks the token hash, and
-    reports the derived (not stored) status."""
+    """A runner row shaped for the API — never leaks the token hash (nor the
+    runner's public key material), and reports the derived (not stored) status
+    plus the host's self-explaining readiness."""
+    readiness = row.get("readiness") or {}
     return {
         "id": row["id"],
         "name": row.get("name", ""),
@@ -113,7 +169,8 @@ def public_runner(row: dict[str, Any], now: Optional[datetime] = None) -> dict[s
         "current_session_id": row.get("current_session_id"),
         "last_heartbeat_at": row.get("last_heartbeat_at"),
         "status": derive_status(row.get("last_heartbeat_at"),
-                                row.get("current_session_id"), now),
+                                row.get("current_session_id"), now, readiness),
+        "readiness": readiness,
         "created_at": row.get("created_at"),
     }
 
@@ -150,8 +207,12 @@ def register_runner(db, *, user_id: str, org_id: str, name: str,
     signing_key = derive_runner_key(config.RUNNER_SIGNING_KEY, str(created["id"]))
     return {
         "runner": public_runner(created),
-        "token": token,            # shown once
-        "signing_key": signing_key,  # shown once; runner stores it to verify work
+        "token": token,              # shown once — the bootstrap credential
+        "signing_key": signing_key,  # shown once; legacy HMAC path (deprecated)
+        # The runner verifies work orders with this and needs no secret to do
+        # so. It generates its OWN keypair on first start and enrolls the
+        # public half; the private half never leaves that machine.
+        "plane_public_key": plane_public_key(),
     }
 
 
@@ -170,17 +231,74 @@ def authenticate_runner(db, token: str) -> dict[str, Any]:
     return rows[0]
 
 
-def record_heartbeat(db, runner_id: str, *, current_session_id: Optional[str] = None) -> None:
-    """Liveness ping. Also renews the lease on any session the runner is
-    currently executing, so a live runner never loses its claim."""
+def enroll_runner(db, runner: dict[str, Any], public_key: str) -> dict[str, Any]:
+    """Trust-on-first-use enrollment of a runner's own public key.
+
+    The bearer token issued at registration is a BOOTSTRAP credential: it is
+    good for exactly one thing beyond identifying the row — publishing the
+    runner's public key, once. After that the key is the identity, and the
+    plane requires a valid signature on every request.
+
+    Re-enrolling an already-enrolled runner is refused. Rotation is therefore an
+    explicit, audited operator action (revoke + re-register), not something a
+    leaked token can do quietly. That is the honest limit of TOFU, stated rather
+    than hidden: a token stolen BEFORE first enrollment can enrol an attacker's
+    key, so a runner should be started promptly after registration.
+    """
+    if not public_key or len(public_key) < 40:
+        raise HTTPException(400, "a valid ed25519 public key is required")
+    if runner.get("public_key"):
+        raise HTTPException(
+            409, "this runner has already enrolled a key; re-register the runner "
+                 "to rotate its identity")
     now = utc_now()
     try:
         db.table("runners").update({
-            "last_heartbeat_at": _iso(now),
-            "current_session_id": current_session_id,
-            "status": "busy" if current_session_id else "online",
+            "public_key": public_key,
+            "key_algorithm": ED25519,
+            "key_registered_at": _iso(now),
             "updated_at": _iso(now),
-        }).eq("id", runner_id).execute()
+        }).eq("id", runner["id"]).execute()
+    except Exception as e:
+        _guard(e)
+    return {"enrolled": True, "algorithm": ED25519, "plane_public_key": plane_public_key()}
+
+
+def verify_runner_request(runner: dict[str, Any], *, method: str, path: str,
+                          body: bytes, timestamp: str, nonce: str,
+                          signature: str) -> None:
+    """Authenticate a request as coming from THIS runner's private key.
+
+    Enforced for every enrolled runner. A legacy (un-enrolled) runner is still
+    accepted on its bearer token alone, so upgrading the fleet never causes an
+    outage — but once a runner has a key, a token alone is no longer enough to
+    impersonate it.
+    """
+    if runner.get("key_algorithm") != ED25519 or not runner.get("public_key"):
+        return  # legacy runner: bearer token only (migration path)
+    if not (signature and timestamp):
+        raise HTTPException(401, "this runner is enrolled and must sign its requests")
+    ok, reason = verify_request(runner["public_key"], method, path, body,
+                                timestamp, nonce or "", signature)
+    if not ok:
+        raise HTTPException(401, f"runner request rejected: {reason}")
+
+
+def record_heartbeat(db, runner_id: str, *, current_session_id: Optional[str] = None,
+                     readiness: Optional[dict] = None) -> None:
+    """Liveness ping + session truth. Also renews the lease on any session the
+    runner is currently executing, so a live runner never loses its claim."""
+    now = utc_now()
+    patch: dict[str, Any] = {
+        "last_heartbeat_at": _iso(now),
+        "current_session_id": current_session_id,
+        "status": derive_status(_iso(now), current_session_id, now, readiness),
+        "updated_at": _iso(now),
+    }
+    if readiness is not None:
+        patch["readiness"] = readiness
+    try:
+        db.table("runners").update(patch).eq("id", runner_id).execute()
         if current_session_id:
             db.table("sessions").update({
                 "claim_expires_at": _iso(now + timedelta(seconds=config.RUNNER_LEASE_SECONDS)),
@@ -288,12 +406,35 @@ def workspace_approval_threshold(db, workspace_id: Optional[str]) -> str:
         return ""
 
 
+def workspace_egress_policy(db, workspace_id: Optional[str]) -> dict:
+    """The workspace data-egress policy (policy as data), {} if none.
+
+    A lookup failure returns {} — the documented default (allow). Failing
+    CLOSED here would brick every run in the org on a transient DB blip; the
+    honest control for "nothing may leave" is an explicit `deny` policy, which
+    is stored and therefore readable. A missing row means the customer never
+    expressed a restriction, not that they expressed the strictest one.
+    """
+    if not workspace_id:
+        return {}
+    try:
+        rows = db.table("workspaces").select("egress_policy").eq(
+            "id", workspace_id).limit(1).execute().data or []
+        return (rows[0].get("egress_policy") if rows else None) or {}
+    except Exception:
+        return {}
+
+
 def issue_work_order(db, runner: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
-    """Build + sign the work order for a freshly claimed session."""
+    """Build + sign the work order for a freshly claimed session, using whichever
+    identity generation this runner has enrolled."""
     threshold = workspace_approval_threshold(db, session.get("workspace_id"))
     order = build_work_order(session, approval_risk_threshold=threshold,
-                             available_secrets=_secret_names(db, session))
-    return sign_for_runner(runner["id"], order)
+                             available_secrets=_secret_names(db, session),
+                             egress_policy=workspace_egress_policy(
+                                 db, session.get("workspace_id")))
+    return sign_for_runner(runner["id"], order,
+                           key_algorithm=str(runner.get("key_algorithm") or HMAC_SHA256))
 
 
 def _secret_names(db, session: dict[str, Any]) -> list[str]:

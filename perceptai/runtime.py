@@ -44,6 +44,7 @@ from .contracts import (
     utc_now_iso,
 )
 from .events import EventType
+from .injection import GoalGuard
 from .reasoning import ReasoningState
 from .secrets import parse_secret_reference
 
@@ -60,6 +61,10 @@ class ExecutionEngine:
         self._last_world: Optional[WorldState] = None
         self._baseline_world: Optional[WorldState] = None
         self._exec_state: Optional[ExecutionState] = None
+        # Chapter IX: dedup key for injection events, and the frozen user goal.
+        self._last_injection: Optional[tuple] = None
+        self._goal_guard: Optional[GoalGuard] = None
+        self._executed: list[StepResult] = []
 
     # -------------------------------------------------------- world model
 
@@ -71,7 +76,33 @@ class ExecutionEngine:
         if self._baseline_world is None:
             self._baseline_world = world
         self._emit_world(task, world)
+        self._emit_injection(task, world)
         return world
+
+    def _emit_injection(self, task: Task, world: WorldState) -> None:
+        """Record that this screen tried to instruct the agent.
+
+        The content is already fenced (world.describe) and the goal is already
+        frozen (GoalGuard), so this event does not *stop* anything — it makes
+        the hostility explainable to the operator, the risk gate and the
+        auditor. Deduped per distinct finding set so a static hostile page does
+        not flood the stream on every snapshot.
+        """
+        report = getattr(world, "injection", None)
+        if report is None or not report.tainted:
+            return
+        signature = (report.critical, tuple(report.categories))
+        if signature == self._last_injection:
+            return
+        self._last_injection = signature
+        self._s.emit(
+            EventType.INJECTION_DETECTED, task,
+            categories=report.categories,
+            critical=report.critical,
+            summary=report.summary(),
+            findings=[f.to_dict() for f in report.findings],
+            contained_by=["provenance_fence", "frozen_goal", "risk_gate"],
+        )
 
     def _emit_world(self, task: Task, world: WorldState) -> None:
         diff = self._s.world.last_diff
@@ -108,9 +139,17 @@ class ExecutionEngine:
         state = ExecutionState()
         self._exec_state = state
         executed: list[StepResult] = []
+        self._executed = executed
         errors: list[str] = []
 
         self._s.emit(EventType.TASK_STARTED, task, instruction=task.instruction)
+
+        # Attach the egress recorder for this run: every byte that leaves the
+        # machine (or is refused) lands on the canonical stream — metadata only,
+        # never content. Answers "what left, why, where, which model, which
+        # policy" from the record, after the fact.
+        self._s.egress._emit = lambda decision: self._s.emit(
+            EventType.EGRESS_DECIDED, task, **decision.to_dict())
 
         self._understand_goal(task, context)
         reasoning = self._s.reasoning
@@ -121,7 +160,7 @@ class ExecutionEngine:
         )
 
         try:
-            output = self._plan(task, context, executed, state, rstate, source="planner")
+            output = self._sound_plan(task, context, executed, state, rstate, source="planner")
             initial = output.steps if output.ok else []
             reasoning.record_plan(rstate, initial,
                                   planner_said_done=output.ok and not output.steps)
@@ -248,6 +287,14 @@ class ExecutionEngine:
             goal = GoalSpec(intent=task.instruction, objectives=[task.instruction])
         context.goal = goal
 
+        # Chapter IX — goal invariance. The goal is derived from the USER's
+        # instruction, before a single pixel has been observed. Freeze it here:
+        # perceived content may inform HOW the goal is pursued, never WHAT it
+        # is. Goal replacement stops being a text-detection problem (unwinnable)
+        # and becomes a structural one: there is no path from screen to goal.
+        self._goal_guard = GoalGuard(task.instruction)
+        self._goal_guard.freeze(goal)
+
         try:
             recalled = self._s.memory.recall_knowledge(goal.entities + goal.required_info)
             for row in recalled:
@@ -269,7 +316,13 @@ class ExecutionEngine:
     # ------------------------------------------------------------ planning
 
     def _plan(self, task: Task, context: TaskContext, executed: list[StepResult],
-              state: ExecutionState, rstate: ReasoningState, source: str) -> PlannerOutput:
+              state: ExecutionState, rstate: ReasoningState, source: str,
+              critique_feedback: Optional[str] = None) -> PlannerOutput:
+        # Enforce goal invariance at the exact boundary where a hijacked goal
+        # would be handed to the planner. Raises GoalDriftError, which aborts
+        # the run honestly rather than pursuing an attacker's objective.
+        if self._goal_guard is not None:
+            self._goal_guard.verify(context.goal)
         world = self._perceive(task)
         self._s.reasoning.observe(rstate, world, self._s.world.last_diff, counted=False)
         world_view = self._s.world.describe(world)
@@ -284,6 +337,60 @@ class ExecutionEngine:
             task.instruction, world_view, executed, windows,
             source=source, goal=context.goal, known_facts=context.facts,
             strategy=rstate.strategy, available_secrets=self._s.secrets.names(),
+            critique_feedback=critique_feedback,
+        )
+
+    # ------------------------------------------- planner <-> critic loop
+
+    def _sound_plan(self, task: Task, context: TaskContext, executed: list[StepResult],
+                    state: ExecutionState, rstate: ReasoningState,
+                    source: str) -> PlannerOutput:
+        """Plan, then let an ADVERSARIAL critic attack the plan BEFORE anything
+        touches the screen. A rejected plan is never executed: the objection is
+        fed back and the planner tries again (bounded). Two cognitive roles
+        disagree; the loop converges or fails honestly.
+
+        This is the difference between detecting a wrong click and preventing it.
+        """
+        feedback: Optional[str] = None
+        output = self._plan(task, context, executed, state, rstate, source)
+
+        for attempt in range(self._config.critic_max_revisions + 1):
+            # Nothing to critique: a failed plan, or the planner's "goal achieved"
+            # signal (an empty step list) — both pass straight through.
+            if not output.ok or not output.steps:
+                return output
+
+            critique = self._s.critic.critique(
+                output.steps, self._last_world, context.goal, executed)
+            self._emit_critique(task, critique, attempt)
+
+            if critique.accepted:
+                return output
+
+            # REJECTED — do not execute. Converge or give up honestly.
+            if attempt >= self._config.critic_max_revisions:
+                return PlannerOutput(
+                    ok=False, raw=output.raw, model=output.model,
+                    error=("plan rejected by the critic and could not be corrected: "
+                           + critique.summary))
+            feedback = critique.feedback()
+            output = self._plan(task, context, executed, state, rstate,
+                                source="critic_revision", critique_feedback=feedback)
+        return output
+
+    def _emit_critique(self, task: Task, critique, attempt: int) -> None:
+        self._s.emit(
+            EventType.PLAN_CRITIQUED, task,
+            verdict=critique.verdict.value,
+            score=round(critique.score, 3),
+            attempt=attempt + 1,
+            escalated=critique.escalated,
+            model=critique.model,
+            summary=critique.summary,
+            findings=[f.to_dict() for f in critique.findings],
+            steps=[s.to_dict() for s in critique.steps],
+            prevented=[f.to_dict() for f in critique.blocking],
         )
 
     def _append_known_controls(self, world_view: str, state: ExecutionState) -> str:
@@ -311,7 +418,7 @@ class ExecutionEngine:
             return None
         state.replans += 1
         try:
-            output = self._plan(task, context, executed, state, rstate, source="replan")
+            output = self._sound_plan(task, context, executed, state, rstate, source="replan")
         except Exception as e:
             self._s.emit(EventType.LOG, task, message=f"Replanning failed: {e}")
             self._s.reasoning.record_plan(rstate, [], planner_said_done=False)
@@ -513,6 +620,26 @@ class ExecutionEngine:
                 # Deliberate: no blind fallback clicks. Honest failure feeds
                 # recovery and replanning; a wrong click can cause real damage.
                 return ActionOutcome(ok=False, error=f"Element '{query}' not found on screen")
+
+            # PRE-FLIGHT VERIFICATION (Chapter XVI). `_find_with_retry` just
+            # refreshed the world, so this is the freshest possible moment — the
+            # instant before the click fires. The critic refuses when it cannot
+            # tell two plausible targets apart, or when an irreversible action
+            # would run twice. Refusal is an honest failure: recovery replans and
+            # asks for a more specific label instead of guessing.
+            objection = self._s.critic.check_action(step, self._last_world, self._executed)
+            if objection is not None:
+                if self._exec_state is not None:
+                    self._exec_state.last_failure_type = objection.kind
+                self._s.emit(
+                    EventType.PLAN_CRITIQUED, task,
+                    verdict="reject", score=0.0, attempt=0, escalated=False, model="",
+                    stage="pre_flight", summary=objection.detail,
+                    findings=[objection.to_dict()], steps=[],
+                    prevented=[objection.to_dict()],
+                )
+                return ActionOutcome(ok=False, error=objection.detail)
+
             x, y = element.center
             outcome = self._s.actions.click(x, y)
             if outcome.ok:

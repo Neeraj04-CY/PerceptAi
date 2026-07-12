@@ -15,6 +15,7 @@ from .events import EventType, TaskEvent
 # unknown types, so shipping these breaks nothing; new clients switch on
 # the inner `kind`.
 _REASONING_EVENTS = frozenset({
+    EventType.PLAN_CRITIQUED,
     EventType.STRATEGY_SELECTED,
     EventType.DECISION_MADE,
     EventType.BELIEF_UPDATED,
@@ -36,6 +37,8 @@ _TRUST_EVENTS = frozenset({
     EventType.APPROVAL_REQUESTED,
     EventType.APPROVAL_DECIDED,
     EventType.SECRET_USED,
+    EventType.INJECTION_DETECTED,
+    EventType.EGRESS_DECIDED,
 })
 
 

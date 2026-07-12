@@ -86,7 +86,7 @@ def test_any_available_warns_on_empty_fleet():
     assert d == {"action": "enqueue", "target_runner_id": None}
     d = disp.dispatch_decision({"kind": "any_available"}, allow_local=False,
                                runners=[{"id": "r", "status": "offline"}])
-    assert d["action"] == "enqueue" and "no runner is online" in d["warning"]
+    assert d["action"] == "enqueue" and "no runner is available" in d["warning"]
 
 
 # --------------------------------------------------------- dispatch (fake DB)

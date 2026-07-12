@@ -16,9 +16,12 @@ from models import (
     OrgCreateRequest,
     SecretCreateRequest,
     WorkspaceCreateRequest,
+    WorkspaceEgressRequest,
+    WorkspaceLearningRequest,
     WorkspaceUpdateRequest,
     WorkspaceWebhookRequest,
 )
+import learning
 from orgs import (
     ensure_personal_org,
     get_membership,
@@ -29,6 +32,9 @@ from orgs import (
     slugify,
     utc_now,
 )
+# The engine owns the definition of an egress policy; the API validates against
+# it rather than keeping a second copy of the security semantics.
+from perceptai.egress import MODES, EgressPolicy
 from plans import get_plan
 from rbac import ROLES, assignable_roles, can, is_role
 from secrets_crypto import derive_key, encrypt
@@ -238,6 +244,67 @@ async def update_workspace(org_id: str, workspace_id: str,
                  workspace_id, {k: v for k, v in patch.items() if k != "updated_at"},
                  workspace_id=workspace_id)
     return updated[0] if updated else {**patch, "id": workspace_id}
+
+
+@router.put("/{org_id}/workspaces/{workspace_id}/egress")
+async def set_workspace_egress(org_id: str, workspace_id: str,
+                               body: WorkspaceEgressRequest,
+                               current_user: dict = Depends(get_current_user)):
+    """Declare what may leave this workspace's machines: allow | redact |
+    local_only | deny. Policy is DATA — the engine reads it at its single LLM
+    checkpoint. Changing it is a policy-level action and is always audited."""
+    db = get_service_db()
+    user_id, email = _actor(current_user)
+    require_permission(db, org_id, user_id, "policy.manage")
+    get_workspace(db, workspace_id, org_id)
+
+    if body.mode not in MODES:
+        raise HTTPException(400, f"mode must be one of {', '.join(MODES)}")
+    policy = EgressPolicy.from_dict(body.model_dump()).to_dict()
+    db.table("workspaces").update({
+        "egress_policy": policy, "updated_at": utc_now(),
+    }).eq("id", workspace_id).execute()
+    record_audit(db, org_id, user_id, email, "workspace.egress_changed",
+                 workspace_id, policy, workspace_id=workspace_id)
+    return policy
+
+
+@router.get("/{org_id}/workspaces/{workspace_id}/learning")
+async def get_learning(org_id: str, workspace_id: str,
+                       current_user: dict = Depends(get_current_user)):
+    """The workspace's learning policy, the tier terms (the value exchange), and
+    the append-only consent history."""
+    db = get_service_db()
+    require_permission(db, org_id, current_user["sub"], "view")
+    get_workspace(db, workspace_id, org_id)
+    return {
+        "policy": learning.get_learning_policy(db, workspace_id),
+        "tiers": learning.TIER_TERMS,
+        "policy_version": learning.POLICY_VERSION,
+        "history": learning.consent_history(db, org_id, workspace_id),
+    }
+
+
+@router.put("/{org_id}/workspaces/{workspace_id}/learning")
+async def set_learning(org_id: str, workspace_id: str,
+                       body: WorkspaceLearningRequest,
+                       current_user: dict = Depends(get_current_user)):
+    """Declare what PerceptAI may learn from this workspace. Every change
+    appends an immutable consent row (who, what, when, which terms) — consent is
+    a policy-level action and is always audited."""
+    db = get_service_db()
+    user_id, email = _actor(current_user)
+    require_permission(db, org_id, user_id, "policy.manage")
+    get_workspace(db, workspace_id, org_id)
+    result = learning.set_learning_policy(
+        db, org_id=org_id, workspace_id=workspace_id, proposed=body.model_dump(),
+        actor_id=user_id, actor_email=email)
+    if result["changes"]:
+        record_audit(db, org_id, user_id, email, "workspace.learning_changed",
+                     workspace_id, {"changes": result["changes"],
+                                    "policy_version": result["policy_version"]},
+                     workspace_id=workspace_id)
+    return result
 
 
 @router.put("/{org_id}/workspaces/{workspace_id}/webhook")

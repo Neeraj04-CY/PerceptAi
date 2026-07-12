@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, KeySquare, Plus, ScrollText, Trash2, Users } from "lucide-react";
+import { Building2, GraduationCap, KeySquare, Plus, Radio, ScrollText, Trash2, Users } from "lucide-react";
 import { cn, isAbortError } from "@/lib/utils";
 import { PageHeader } from "@/components/dashboard/page-header";
 import {
@@ -15,6 +15,8 @@ import {
   ApiOrgDetail,
   ApiSecretMeta,
   ApiWorkspace,
+  EgressMode,
+  LearningInfo,
   OrgUsage,
   addMember,
   createSecret,
@@ -27,8 +29,11 @@ import {
   getOrgs,
   getOrgUsage,
   getSecrets,
+  getWorkspaceLearning,
   removeMember,
   updateMemberRole,
+  setWorkspaceEgress,
+  setWorkspaceLearning,
   setWorkspaceWebhook,
   updateWorkspacePolicy,
 } from "@/lib/api";
@@ -412,9 +417,123 @@ function WorkspaceCard({ orgId, workspace, allCapabilities, canManage, onChanged
           </div>
         )}
       </div>
+      <EgressConfig orgId={orgId} workspace={workspace} canManage={canManage} />
+      <LearningConfig orgId={orgId} workspace={workspace} canManage={canManage} />
       <WebhookConfig orgId={orgId} workspace={workspace}
                      canManage={canManage} onChanged={onChanged} />
     </Card>
+  );
+}
+
+/** Data egress (Chapter IX): what may leave this workspace's machines and reach
+ * a model. The crown-jewel control for a security review — screenshots of an
+ * ERP never leaving is a single click. */
+function EgressConfig({ orgId, workspace, canManage }: {
+  orgId: string; workspace: ApiWorkspace; canManage: boolean;
+}) {
+  const [mode, setMode] = useState<EgressMode>(
+    (workspace.egress_policy?.mode as EgressMode) || "allow");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const MODES: { m: EgressMode; label: string; hint: string }[] = [
+    { m: "allow", label: "allow", hint: "observations may be sent to the model" },
+    { m: "redact", label: "redact", hint: "sent with emails, cards, keys, SSNs removed" },
+    { m: "local_only", label: "local-only", hint: "screenshots never leave; text still may" },
+    { m: "deny", label: "deny", hint: "nothing leaves; runs refuse up front" },
+  ];
+
+  const apply = async (next: EgressMode) => {
+    setMode(next); setBusy(true); setSaved(false);
+    try { await setWorkspaceEgress(orgId, workspace.id, { mode: next }); setSaved(true); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3 border-t border-white/[0.05] pt-3">
+      <div className="mb-1.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em] text-white/30">
+        <Radio size={11} /> Data egress {saved && <span className="text-accent">· saved</span>}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {MODES.map((o) => (
+          <button key={o.m} disabled={!canManage || busy} onClick={() => apply(o.m)}
+                  title={o.hint}
+                  className={cn("rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                                mode === o.m
+                                  ? "border-accent/35 text-accent bg-accent/[0.07]"
+                                  : "border-white/10 text-white/40 hover:text-white",
+                                !canManage && "cursor-default")}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[11px] text-white/40">
+        {MODES.find((o) => o.m === mode)?.hint}. Enforced at the engine's single model checkpoint;
+        every send or refusal is on the event stream.
+      </p>
+    </div>
+  );
+}
+
+/** Learning consent (Chapter IX foundation): what PerceptAI may learn from this
+ * workspace. Each tier is an explicit value exchange; every change is logged. */
+function LearningConfig({ orgId, workspace, canManage }: {
+  orgId: string; workspace: ApiWorkspace; canManage: boolean;
+}) {
+  const [info, setInfo] = useState<LearningInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const c = new AbortController();
+    getWorkspaceLearning(orgId, workspace.id, c.signal).then(setInfo).catch(() => setInfo(null));
+    return () => c.abort();
+  }, [orgId, workspace.id]);
+
+  if (!info) return null;
+  const tiers = info.policy.tiers || {};
+
+  const toggle = async (tier: string) => {
+    if (!canManage || tier === "workspace_only") return;
+    setBusy(true);
+    try {
+      const next = { ...tiers, [tier]: !tiers[tier] };
+      const res = await setWorkspaceLearning(orgId, workspace.id, { tiers: next });
+      setInfo((prev) => (prev ? { ...prev, policy: res.policy } : prev));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3 border-t border-white/[0.05] pt-3">
+      <div className="mb-1.5 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em] text-white/30">
+        <GraduationCap size={11} /> Learning
+      </div>
+      <div className="space-y-1.5">
+        {Object.entries(info.tiers).map(([tier, terms]) => {
+          const on = !!tiers[tier];
+          const locked = tier === "workspace_only";
+          return (
+            <button key={tier} disabled={!canManage || busy || locked} onClick={() => toggle(tier)}
+                    title={`${terms.grants} — ${terms.benefit}`}
+                    className={cn("flex w-full items-start gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors",
+                                  on ? "border-accent/25 bg-accent/[0.04]" : "border-white/[0.07] hover:border-white/15",
+                                  (locked || !canManage) && "cursor-default")}>
+              <span className={cn("mt-0.5 h-3 w-3 shrink-0 rounded-sm border",
+                                  on ? "bg-accent border-accent" : "border-white/25")} />
+              <span className="min-w-0">
+                <span className="block font-mono text-[10px] uppercase tracking-wider text-white/70">
+                  {tier.replace(/_/g, " ")}{locked && " · always on"}
+                </span>
+                <span className="block text-[11px] leading-snug text-white/45">{terms.benefit}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[10px] text-white/30">
+        You own the learned knowledge ({info.policy.knowledge_owner}). Shared tiers are
+        de-identified ({info.policy.anonymization}). Every change is recorded — terms {info.policy_version}.
+      </p>
+    </div>
   );
 }
 

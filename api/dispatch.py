@@ -48,6 +48,8 @@ def dispatch_decision(target: dict[str, Any], *, allow_local: bool,
     online (the queue holds it; the operator should know). `runners` carries
     derived statuses (runners.public_runner rows).
     """
+    from runners import is_available
+
     kind = target.get("kind", "this_machine")
     if kind == "this_machine":
         if not allow_local:
@@ -63,13 +65,17 @@ def dispatch_decision(target: dict[str, Any], *, allow_local: bool,
             return {"action": "blocked",
                     "reason": "the schedule's pinned runner no longer exists — retarget it"}
         decision: dict[str, Any] = {"action": "enqueue", "target_runner_id": runner_id}
-        if match.get("status") == "offline":
-            decision["warning"] = f"pinned runner '{match.get('name', runner_id)}' is offline; the run will wait in the queue"
+        if not is_available(str(match.get("status", ""))):
+            # Session truth in the warning: "locked" is far more actionable than
+            # "offline" for the human who has to fix it before the next run.
+            decision["warning"] = (
+                f"pinned runner '{match.get('name', runner_id)}' is "
+                f"{match.get('status', 'unavailable')}; the run will wait in the queue")
         return decision
     # any_available
     decision = {"action": "enqueue", "target_runner_id": None}
-    if not any(r.get("status") in ("online", "busy") for r in runners):
-        decision["warning"] = "no runner is online; the run will wait in the queue"
+    if not any(is_available(str(r.get("status", ""))) for r in runners):
+        decision["warning"] = "no runner is available; the run will wait in the queue"
     return decision
 
 
@@ -160,6 +166,7 @@ def _run_local_session(db, workflow: dict[str, Any], instruction: str, *,
     from failure_policy import apply_failure_policy
     from orgs import record_audit
     from routes.execute_routes import increment_usage
+    from runners import workspace_egress_policy
     from secrets_resolver import build_local_resolver
 
     session_id = str(uuid.uuid4())
@@ -178,9 +185,10 @@ def _run_local_session(db, workflow: dict[str, Any], instruction: str, *,
     db.table("sessions").insert({k: v for k, v in row.items() if v is not None}).execute()
 
     secrets = build_local_resolver(db, workflow.get("org_id"), workflow.get("workspace_id"))
+    egress = workspace_egress_policy(db, workflow.get("workspace_id"))
     final = {"status": "failed", "steps": [], "result": None,
              "error": None, "execution_time": 0.0, "events": []}
-    for item in execute_task_stream(instruction, secrets=secrets):
+    for item in execute_task_stream(instruction, secrets=secrets, egress=egress):
         if item.get("type") == "_result":
             final.update({k: item.get(k, final[k]) for k in final})
         elif item.get("type") == "error":

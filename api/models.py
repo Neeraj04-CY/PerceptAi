@@ -119,6 +119,18 @@ class SecretCreateRequest(BaseModel):
 class WorkspaceWebhookRequest(BaseModel):
     url: Optional[str] = None  # https URL, or empty/None to clear
 
+class WorkspaceEgressRequest(BaseModel):
+    """What may leave this workspace's machines. Policy as data."""
+    mode: str = "allow"                 # allow | redact | local_only | deny
+    redact: List[str] = []              # redaction classes (redact mode)
+    custom_patterns: List[str] = []     # customer-supplied regexes
+
+class WorkspaceLearningRequest(BaseModel):
+    """What PerceptAI may learn from this workspace's executions. Policy as
+    data; changing it appends immutable consent rows."""
+    tiers: dict = {}                    # {workspace_only, anonymized_priors, model_improvement}
+    anonymization: Optional[str] = None  # standard | strict
+
 # Workflows (Agent Studio)
 class WorkflowCreateRequest(BaseModel):
     name: str

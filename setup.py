@@ -32,8 +32,9 @@ setup(
     packages=["perceptai", "runner"],
     install_requires=read_requirements(),
     extras_require={
-        # The thin runner needs only an HTTP client on top of the engine.
-        "runner": ["requests>=2.28"],
+        # The thin runner needs an HTTP client and, for its Ed25519 identity
+        # (Chapter IX), the cryptography library — both on top of the engine.
+        "runner": ["requests>=2.28", "cryptography>=41.0"],
     },
     entry_points={
         "console_scripts": [

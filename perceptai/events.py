@@ -21,6 +21,8 @@ class EventType(str, Enum):
     WORLD_SNAPSHOT = "world_snapshot"
     EVIDENCE_COLLECTED = "evidence_collected"
     PLAN_CREATED = "plan_created"
+    # Chapter XVI: the critic's verdict on a plan BEFORE any action runs.
+    PLAN_CRITIQUED = "plan_critiqued"
     REPLANNED = "replanned"
     STEP_STARTED = "step_started"
     STEP_COMPLETED = "step_completed"
@@ -54,6 +56,12 @@ class EventType(str, Enum):
     APPROVAL_DECIDED = "approval_decided"
     # Audit that a secret was injected — the NAME only, never the value.
     SECRET_USED = "secret_used"
+    # Chapter IX. The screen tried to instruct the agent: the explainable,
+    # auditable record that a hostile screen was seen, fenced and contained.
+    INJECTION_DETECTED = "injection_detected"
+    # An observation was withheld from a model by workspace egress policy —
+    # what left the machine, and what did not, is always on the record.
+    EGRESS_DECIDED = "egress_decided"
     # Mission stream (Chapter 5). The workforce layer emits on the same
     # canonical bus; task_id carries the mission id, payloads carry work
     # order ids. Consumers derive mission views, never rebuild them.

@@ -89,13 +89,16 @@ _ENGINE_DEPS = [
 
 
 def check_config(config: Optional[RunnerConfig], raw: dict[str, str]) -> Check:
-    missing = [k for k in ("RUNNER_PLANE_URL", "RUNNER_TOKEN", "RUNNER_SIGNING_KEY") if not raw.get(k)]
+    # RUNNER_SIGNING_KEY is the legacy symmetric credential and is optional: an
+    # enrolled runner verifies work with the plane's PUBLIC key and holds no
+    # secret that could forge one.
+    missing = [k for k in ("RUNNER_PLANE_URL", "RUNNER_TOKEN") if not raw.get(k)]
     if missing:
         return Check("runner credentials", FAIL,
                      f"missing {', '.join(missing)}",
                      "register a runner in the dashboard (/dashboard/runners) and set the "
                      "shown values as environment variables")
-    return Check("runner credentials", OK, "plane URL, token and signing key present")
+    return Check("runner credentials", OK, "plane URL and token present")
 
 
 def check_engine(import_probe: ImportProbe) -> list[Check]:
@@ -123,6 +126,20 @@ def check_screen(screen_probe: ScreenProbe) -> Check:
                  "run on a machine with an interactive desktop session (not headless/SSH-only)")
 
 
+def check_readiness(readiness_probe: Any) -> Check:
+    """Session truth at setup: the operator sees the same state, with the same
+    explanation, that the runner will refuse to claim work on. A locked host is
+    a WARN, not a FAIL - it is a correct, recoverable state (unlock and go),
+    and the runner will start claiming the moment the desktop returns."""
+    try:
+        readiness = readiness_probe()
+    except Exception as e:
+        return Check("session truth", WARN, f"could not determine desktop state: {e}", "")
+    if readiness.can_execute:
+        return Check("session truth", OK, readiness.detail)
+    return Check(f"session truth: {readiness.state}", WARN, readiness.detail, readiness.fix)
+
+
 def check_plane(client: Any) -> Check:
     try:
         client.ping()
@@ -141,15 +158,38 @@ def check_credentials(client: Any) -> Check:
                      "re-register the runner; the token may be wrong or revoked")
 
 
-def check_signing(config: Optional[RunnerConfig]) -> Check:
+def check_signing(config: Optional[RunnerConfig], identity: Any = None) -> Check:
+    """Prove this host can verify work and sign its own requests.
+
+    An enrolled runner self-tests its Ed25519 keypair; the private half never
+    leaves this machine. A legacy runner self-tests the symmetric HMAC key.
+    A host with neither cannot authenticate at all.
+    """
+    if identity is not None:
+        try:
+            from perceptai.signing import sign_request, verify_request
+            ts, nonce = 1_700_000_000, "self-test"
+            sig = sign_request(identity.private_key, "POST", "/x", b"{}", ts, nonce)
+            ok, reason = verify_request(identity.public_key, "POST", "/x", b"{}",
+                                        ts, nonce, sig, now=ts)
+            if ok:
+                state = "enrolled" if identity.enrolled else "not yet enrolled (will enrol on start)"
+                return Check("runner identity", OK,
+                             f"ed25519 keypair self-test passed - {state}")
+            return Check("runner identity", FAIL, f"keypair self-test failed: {reason}",
+                         "delete ~/.perceptai/runner_identity.json and re-register the runner")
+        except Exception as e:
+            return Check("runner identity", WARN, f"could not self-test: {e}", "")
+
     if config is None or not config.signing_key:
-        return Check("work signing", FAIL, "no signing key", "set RUNNER_SIGNING_KEY from registration")
+        return Check("work signing", FAIL, "no runner identity and no signing key",
+                     "register a runner in the dashboard and start it once to enrol its key")
     try:
         from perceptai.signing import sign_work_order, verify_work_order
         sample = {"session_id": "self-test", "nonce": "x"}
         sig = sign_work_order(config.signing_key, sample)
         if verify_work_order(config.signing_key, sample, sig):
-            return Check("work signing", OK, "signature self-test passed")
+            return Check("work signing", OK, "legacy hmac signature self-test passed")
         return Check("work signing", FAIL, "self-test failed", "re-register the runner for a fresh signing key")
     except Exception as e:
         return Check("work signing", WARN, f"could not self-test: {e}", "")
@@ -157,9 +197,16 @@ def check_signing(config: Optional[RunnerConfig]) -> Check:
 
 # --------------------------------------------------------------- orchestration
 
+def _real_readiness():
+    from .readiness import probe
+    return probe()
+
+
 def run_doctor(config: Optional[RunnerConfig], raw_env: dict[str, str], *,
                import_probe: ImportProbe = _real_import,
                screen_probe: ScreenProbe = _real_screen,
+               readiness_probe: Any = _real_readiness,
+               identity: Any = None,
                client: Any = None) -> DoctorReport:
     """Full readiness report. Network checks are skipped (not silently passed)
     when config is incomplete, so the report always tells the truth."""
@@ -167,7 +214,8 @@ def run_doctor(config: Optional[RunnerConfig], raw_env: dict[str, str], *,
     checks.extend(check_engine(import_probe))
     checks.append(check_llm_key())
     checks.append(check_screen(screen_probe))
-    checks.append(check_signing(config))
+    checks.append(check_readiness(readiness_probe))
+    checks.append(check_signing(config, identity))
     if client is not None:
         checks.append(check_plane(client))
         checks.append(check_credentials(client))
