@@ -35,8 +35,6 @@ PACKS: list[dict[str, str]] = [
      "tagline": "Onboard, provision and audit across the apps IT actually uses."},
     {"id": "support", "name": "Customer Support",
      "tagline": "Triage across every tool an agent has open, in seconds."},
-    {"id": "starter", "name": "Get started safely",
-     "tagline": "A harmless first run that proves the whole loop in 15 seconds."},
 ]
 
 
@@ -276,28 +274,6 @@ TEMPLATES: list[dict[str, Any]] = [
             _var("crm", "CRM", "Salesforce"),
         ],
         "outputs": ["Issue summary", "Account status", "Recommended next step", "Sources"],
-    },
-
-    # ---------------------------------------------------------- STARTER
-    {
-        "id": "starter-smoke-test",
-        "pack": "starter",
-        "name": "Safe starter: open Notepad and verify",
-        "category": "First run",
-        "mode": "task",
-        "flagship": True,
-        "value": "Prove the whole perceive -> plan -> act -> verify loop in one harmless, ~15-second run.",
-        "apps": ["Notepad"],
-        "time_saved": "-",
-        "description": "Opens Notepad, types one line, and verifies it appeared - "
-                       "harmless, and the fastest way to see the cockpit work.",
-        "instruction": "Open Notepad and type '{{message}}'. Verify the text "
-                       "appears on screen, then report what you see.",
-        "variables": [
-            _var("message", "Message", "Hello from PerceptAI", required=False,
-                 description="The line to type"),
-        ],
-        "outputs": ["Typed confirmation", "Verification result"],
     },
 ]
 

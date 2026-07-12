@@ -4,15 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  LayoutDashboard,
+  Sunrise,
   PlayCircle,
-  Network,
-  PenTool,
-  Layers,
+  History,
+  LibraryBig,
   ShieldCheck,
-  BarChart3,
-  Building2,
-  KeyRound,
+  Lightbulb,
+  Settings2,
   Search,
   CornerDownLeft,
   LogOut,
@@ -30,21 +28,19 @@ interface Command {
   id: string;
   label: string;
   hint?: string;
-  icon: typeof LayoutDashboard;
+  icon: typeof Sunrise;
   keywords?: string;
   run: (router: ReturnType<typeof useRouter>) => void;
 }
 
 const nav: Array<{ label: string; href: string; icon: Command["icon"]; hint: string }> = [
-  { label: "Mission Control", href: "/dashboard", icon: LayoutDashboard, hint: "Operations overview" },
-  { label: "Run", href: "/dashboard/run", icon: PlayCircle, hint: "Start a task or mission" },
-  { label: "Missions", href: "/dashboard/missions", icon: Network, hint: "Workforce runs" },
-  { label: "Studio", href: "/dashboard/studio", icon: PenTool, hint: "Author workflows" },
-  { label: "Sessions", href: "/dashboard/sessions", icon: Layers, hint: "Task history & replay" },
-  { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, hint: "Pending decisions" },
-  { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3, hint: "Usage & outcomes" },
-  { label: "Organization", href: "/dashboard/org", icon: Building2, hint: "Members, workspaces, secrets" },
-  { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, hint: "Credentials" },
+  { label: "Today", href: "/dashboard", icon: Sunrise, hint: "The morning brief" },
+  { label: "Assign work", href: "/dashboard/run", icon: PlayCircle, hint: "Brief your workforce and watch it work" },
+  { label: "Operations", href: "/dashboard/operations", icon: History, hint: "The work record" },
+  { label: "Business Templates", href: "/dashboard/templates", icon: LibraryBig, hint: "Hire for a role" },
+  { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, hint: "Decisions waiting on you" },
+  { label: "Answers", href: "/dashboard/answers", icon: Lightbulb, hint: "What's working, what's improving" },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings2, hint: "Workspace, people, policies, machines" },
 ];
 
 const commands: Command[] = [

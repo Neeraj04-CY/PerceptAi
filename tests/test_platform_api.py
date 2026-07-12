@@ -166,9 +166,9 @@ class TestTemplates:
         assert "{{" not in out
 
     def test_render_uses_defaults(self):
-        t = get_template("starter-smoke-test")
-        out = render_instruction(t["instruction"], t["variables"], {})
-        assert "Hello from PerceptAI" in out
+        t = get_template("finance-reconciliation")
+        out = render_instruction(t["instruction"], t["variables"], {"batch": "B-88"})
+        assert "the ERP" in out and "the banking portal" in out  # defaults filled
 
     def test_render_missing_required_raises(self):
         t = get_template("erp-invoice-posting")

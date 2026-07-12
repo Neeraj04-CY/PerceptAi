@@ -5,37 +5,39 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  LayoutDashboard,
-  PlayCircle,
-  Network,
-  PenTool,
-  Layers,
+  Sunrise,
+  History,
+  LibraryBig,
   ShieldCheck,
-  KeyRound,
-  BarChart3,
-  Building2,
-  Server,
+  Lightbulb,
+  Settings2,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// The workforce IA (Phase 2): six surfaces, each answering one question.
+// `matches` claims legacy route families so detail pages highlight their
+// section (e.g. a session detail lights up Operations).
 const nav = [
-  { label: "Mission Control", href: "/dashboard", icon: LayoutDashboard, testid: "nav-home", enabled: true },
-  { label: "Run", href: "/dashboard/run", icon: PlayCircle, testid: "nav-run", enabled: true },
-  { label: "Missions", href: "/dashboard/missions", icon: Network, testid: "nav-missions", enabled: true },
-  { label: "Studio", href: "/dashboard/studio", icon: PenTool, testid: "nav-studio", enabled: true },
-  { label: "Sessions", href: "/dashboard/sessions", icon: Layers, testid: "nav-sessions", enabled: true },
-  { label: "Runners", href: "/dashboard/runners", icon: Server, testid: "nav-runners", enabled: true },
-  { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true },
-  { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3, testid: "nav-analytics", enabled: true },
-  { label: "Organization", href: "/dashboard/org", icon: Building2, testid: "nav-org", enabled: true },
-  { label: "API Keys", href: "/dashboard/keys", icon: KeyRound, testid: "nav-keys", enabled: true },
+  { label: "Today", href: "/dashboard", icon: Sunrise, testid: "nav-home", enabled: true,
+    matches: [] as string[] },
+  { label: "Operations", href: "/dashboard/operations", icon: History, testid: "nav-operations", enabled: true,
+    matches: ["/dashboard/sessions", "/dashboard/missions", "/dashboard/run"] },
+  { label: "Templates", href: "/dashboard/templates", icon: LibraryBig, testid: "nav-templates", enabled: true,
+    matches: ["/dashboard/studio"] },
+  { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true,
+    matches: [] as string[] },
+  { label: "Answers", href: "/dashboard/answers", icon: Lightbulb, testid: "nav-answers", enabled: true,
+    matches: ["/dashboard/analytics"] },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings2, testid: "nav-settings", enabled: true,
+    matches: ["/dashboard/org", "/dashboard/keys", "/dashboard/runners"] },
 ];
 
-function isActive(pathname: string, href: string): boolean {
+function isActive(pathname: string, href: string, matches: string[] = []): boolean {
   if (href === "/dashboard") return pathname === href;
-  return pathname === href || pathname.startsWith(`${href}/`);
+  if (pathname === href || pathname.startsWith(`${href}/`)) return true;
+  return matches.some((m) => pathname === m || pathname.startsWith(`${m}/`));
 }
 
 export function Sidebar() {
@@ -107,7 +109,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
         {nav.map((item) => {
-          const active = item.enabled && isActive(pathname, item.href);
+          const active = item.enabled && isActive(pathname, item.href, item.matches);
           const Icon = item.icon;
           return (
             <Link
@@ -192,7 +194,7 @@ export function MobileBottomNav() {
       <div className="flex items-center justify-around h-16 px-2">
         {nav.filter((n) => n.enabled).slice(0, 5).map((item) => {
           const Icon = item.icon;
-          const active = isActive(pathname, item.href);
+          const active = isActive(pathname, item.href, item.matches);
           return (
             <Link
               key={item.label}

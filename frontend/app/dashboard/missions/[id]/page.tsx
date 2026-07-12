@@ -69,7 +69,7 @@ export default function MissionDetailPage() {
     <div className="space-y-4">
       {/* header */}
       <div className="flex items-start gap-3">
-        <Link href="/dashboard/missions"
+        <Link href="/dashboard/operations"
               className="mt-1 rounded-md p-1.5 text-white/40 hover:text-white hover:bg-white/[0.04] transition-colors">
           <ArrowLeft size={15} />
         </Link>

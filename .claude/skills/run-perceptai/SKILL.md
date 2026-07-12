@@ -69,12 +69,12 @@ dashboard  ok  -> shots/dashboard.png
 studio     ok  -> shots/studio.png
 ...
 created workflow: http://localhost:3000/dashboard/studio/c957e0f0-...
-instruction loaded: "Open Notepad and type '{{message}}'. Verify the text appears..."
+instruction loaded: "In {{erp}}, create and post a vendor invoice for vendor {{vendor}}..."
 
 SMOKE OK
 ```
 
-Pages: `dashboard studio runners sessions missions approvals analytics org keys`.
+Pages: `dashboard operations templates approvals answers settings analytics runners org keys`.
 Env overrides: `API=` (default `http://127.0.0.1:8000`), `WEB=` (default `http://localhost:3000`).
 
 ## Test (safe — no screen control)

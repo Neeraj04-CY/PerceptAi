@@ -15,9 +15,9 @@ interface TaskInputProps {
 }
 
 const suggestions = [
-  "Open Spotify and play a jazz playlist",
-  "Launch Chrome and summarize the latest AI news",
-  "Navigate legacy ERP dashboard and export today's invoices",
+  "Post today's pending invoices in the ERP and report the document numbers",
+  "Update the ACME opportunity in the CRM to $250,000 and verify the change saved",
+  "Reconcile payment batch B-88 between the ERP and the banking portal",
 ];
 
 function formatKeyPreview(key: unknown) {
@@ -31,7 +31,7 @@ function formatKeyPreview(key: unknown) {
 }
 
 export function TaskInput({ running, onRun, onStop, apiKeyValue, initialTask }: TaskInputProps) {
-  const [task, setTask] = useState("Launch Chrome and summarize the latest AI news");
+  const [task, setTask] = useState("");
   const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -62,7 +62,7 @@ export function TaskInput({ running, onRun, onStop, apiKeyValue, initialTask }: 
       <div className="relative p-5 md:p-6">
         <div className="flex items-center gap-2 mb-3">
           <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">
-            New task
+            Brief your workforce
           </span>
           <span className="h-px flex-1 bg-white/[0.06]" />
           <span className="font-mono text-[10px] text-white/30">⌘↵ to run</span>
@@ -79,7 +79,7 @@ export function TaskInput({ running, onRun, onStop, apiKeyValue, initialTask }: 
               onRun(task);
             }
           }}
-          placeholder="What should I automate today?"
+          placeholder="Describe the business outcome you need…"
           disabled={running}
           rows={1}
           data-testid="task-textarea"

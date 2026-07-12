@@ -1,5 +1,7 @@
-import { SessionsView } from "@/components/dashboard/sessions/sessions-view";
+import { redirect } from "next/navigation";
 
-export default function SessionsPage() {
-  return <SessionsView />;
+// Sessions lives on as the work record: /dashboard/operations.
+// Detail pages (/dashboard/sessions/[id]) are unchanged.
+export default function SessionsRedirect() {
+  redirect("/dashboard/operations");
 }

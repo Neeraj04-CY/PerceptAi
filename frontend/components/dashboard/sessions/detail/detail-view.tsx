@@ -83,7 +83,7 @@ export function DetailView({ id }: { id: string }) {
     <div className="space-y-6">
       {/* Back */}
       <Link
-        href="/dashboard/sessions"
+        href="/dashboard/operations"
         data-testid="back-to-sessions"
         className="inline-flex items-center gap-1 text-[12.5px] text-white/50 hover:text-white transition-colors -ml-1"
       >
@@ -286,7 +286,7 @@ function ErrorBlock({ message, onRetry }: { message: string; onRetry: () => void
       <p className="mt-1.5 text-[12.5px] text-white/55 max-w-md leading-relaxed">{message}</p>
       <div className="mt-5 flex items-center gap-2">
         <Link
-          href="/dashboard/sessions"
+          href="/dashboard/operations"
           data-testid="error-back"
           className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.10] bg-white/[0.04] hover:bg-white/[0.08] px-3.5 h-9 text-[12.5px] text-white transition-colors"
         >

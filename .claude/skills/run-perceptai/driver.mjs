@@ -33,12 +33,13 @@ const PASSWORD = process.env.SMOKE_PASSWORD || "SmokeTest123!";
 // starting a task takes over the real mouse/keyboard on this machine.
 const PAGES = {
   dashboard: "/dashboard",
-  studio: "/dashboard/studio",
-  runners: "/dashboard/runners",
-  sessions: "/dashboard/sessions",
-  missions: "/dashboard/missions",
+  operations: "/dashboard/operations",
+  templates: "/dashboard/templates",
   approvals: "/dashboard/approvals",
+  answers: "/dashboard/answers",
+  settings: "/dashboard/settings",
   analytics: "/dashboard/analytics",
+  runners: "/dashboard/runners",
   org: "/dashboard/org",
   keys: "/dashboard/keys",
 };
@@ -140,13 +141,13 @@ async function flow() {
   const page = await ctx.newPage();
   page.on("pageerror", (e) => console.log("PAGEERR:", e.message));
 
-  await page.goto(`${WEB}/dashboard/studio`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${WEB}/dashboard/templates`, { waitUntil: "domcontentloaded" });
   await settle(page);
   // IMPORTANT: after this has run once, the workflow it created also appears in
   // "Your workflows" — so the template's title matches TWICE and getByText()
   // throws a strict-mode violation. Template cards are <button>, saved
   // workflows are <a>. Target the button so the driver stays idempotent.
-  await page.getByRole("button", { name: /Safe starter: open Notepad/ }).click();
+  await page.getByRole("button", { name: /Post invoice to the ERP/ }).click();
 
   // Creating from a template navigates to /dashboard/studio/<new-id>
   await page.waitForURL(/\/dashboard\/studio\/[0-9a-f-]{8,}/, { timeout: 20000 });
@@ -160,7 +161,7 @@ async function flow() {
   const instruction = await page.locator("textarea").first().inputValue();
   console.log("created workflow:", page.url());
   console.log("instruction loaded:", JSON.stringify(instruction.slice(0, 70)));
-  if (!instruction.includes("Notepad")) throw new Error("template did not load into the editor");
+  if (!instruction.includes("invoice")) throw new Error("template did not load into the editor");
   console.log("-> shots/flow-workflow-editor.png");
   await browser.close();
 }

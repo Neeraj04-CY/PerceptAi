@@ -141,7 +141,7 @@ export default function WorkflowEditorPage() {
     <div className="space-y-4">
       {/* header */}
       <div className="flex flex-wrap items-center gap-3">
-        <Link href="/dashboard/studio"
+        <Link href="/dashboard/templates"
               className="rounded-md p-1.5 text-white/40 hover:text-white hover:bg-white/[0.04] transition-colors">
           <ArrowLeft size={15} />
         </Link>

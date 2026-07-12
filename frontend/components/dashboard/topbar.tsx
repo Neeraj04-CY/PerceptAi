@@ -11,15 +11,20 @@ import { openCommandPalette } from "./command-palette";
  * and a real ⌘K command palette trigger. No fake controls. */
 
 const SECTIONS: Record<string, string> = {
-  "/dashboard": "Mission Control",
-  "/dashboard/run": "Run",
-  "/dashboard/missions": "Missions",
-  "/dashboard/studio": "Studio",
-  "/dashboard/sessions": "Sessions",
+  "/dashboard": "Today",
+  "/dashboard/run": "Assign work",
+  "/dashboard/operations": "Operations",
+  "/dashboard/missions": "Operations",
+  "/dashboard/sessions": "Operations",
+  "/dashboard/templates": "Business Templates",
+  "/dashboard/studio": "Business Templates",
   "/dashboard/approvals": "Approvals",
-  "/dashboard/analytics": "Analytics",
-  "/dashboard/org": "Organization",
-  "/dashboard/keys": "API Keys",
+  "/dashboard/answers": "Answers",
+  "/dashboard/analytics": "Supporting detail",
+  "/dashboard/settings": "Settings",
+  "/dashboard/org": "Workspace",
+  "/dashboard/keys": "Developer API",
+  "/dashboard/runners": "Machines",
 };
 
 function crumbs(pathname: string): Array<{ label: string; href?: string }> {

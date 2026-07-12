@@ -88,12 +88,12 @@ function Studio() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Studio"
-        subtitle="Pick a workflow you already do by hand. Fill two fields. Run it — or schedule it."
+        title="Business Templates"
+        subtitle="Hire your workforce for the work your team does by hand. Every template states its business goal, the systems it touches, and the evidence it produces."
         actions={
           <button onClick={() => startFrom(null)} disabled={creating !== null}
                   className="inline-flex h-9 items-center gap-2 rounded-full bg-accent px-4 text-[13px] font-medium text-black hover:shadow-[0_0_32px_-8px_rgba(0,255,133,0.6)] transition-shadow disabled:opacity-50">
-            <Plus size={14} strokeWidth={2.4} /> New workflow
+            <Plus size={14} strokeWidth={2.4} /> Define a role
           </button>
         }
       />
