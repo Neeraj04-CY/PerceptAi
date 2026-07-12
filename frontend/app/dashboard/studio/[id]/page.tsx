@@ -7,12 +7,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Activity, ArrowLeft, CalendarClock, Play, Plus, Trash2, UploadCloud } from "lucide-react";
+import {
+  Activity, ArrowLeft, BadgeCheck, CalendarClock, Gauge, Play, Plus,
+  ShieldQuestion, Trash2, UploadCloud,
+} from "lucide-react";
 import { cn, isAbortError } from "@/lib/utils";
 import {
+  ApiAutonomyVerdict,
   ApiRunner,
   ApiWorkflow,
-  ApiWorkflowHealth,
+  ApiWorkflowAssurance,
   ApiWorkflowRun,
   ApiWorkflowSchedule,
   ApiWorkflowVariable,
@@ -23,6 +27,8 @@ import {
   renderWorkflow,
   updateWorkflow,
 } from "@/lib/api";
+
+interface AssuranceData { assurance: ApiWorkflowAssurance; runs: ApiWorkflowRun[]; }
 
 const SLOT = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 
@@ -43,6 +49,7 @@ export default function WorkflowEditorPage() {
   const [publishing, setPublishing] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [assurance, setAssurance] = useState<AssuranceData | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,6 +60,12 @@ export default function WorkflowEditorPage() {
         if (String(e).includes("Unauthorized")) router.replace("/signin");
         else setError(e instanceof Error ? e.message : "Failed to load workflow");
       });
+    // Assurance: the measured, verified reliability ledger. Fetched once and
+    // shared by the ledger card AND the schedule verdict — the evidence sits
+    // exactly where the autonomy decision is made.
+    getWorkflowRuns(params.id, 20, controller.signal)
+      .then((r) => setAssurance({ assurance: r.assurance, runs: r.runs }))
+      .catch(() => setAssurance(null));
     return () => controller.abort();
   }, [params.id, router]);
 
@@ -246,6 +259,10 @@ export default function WorkflowEditorPage() {
             <h2 className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
               <CalendarClock size={12} /> Schedule
             </h2>
+            {/* The earned-autonomy verdict, right where you decide to automate. */}
+            {assurance && assurance.assurance.sample_size > 0 && (
+              <AutonomyChip verdict={assurance.assurance.autonomy} />
+            )}
             <label className="flex items-center gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -295,7 +312,7 @@ export default function WorkflowEditorPage() {
             </p>
           </section>
 
-          <RunHistory workflowId={workflow.id} />
+          <AssuranceCard data={assurance} />
 
           {(workflow.versions?.length ?? 0) > 0 && (
             <section className="glass rounded-xl p-4">
@@ -439,56 +456,121 @@ function Chip({ active, onClick, children }: {
 
 /* -------------------------------------------------------- run history */
 
-function RunHistory({ workflowId }: { workflowId: string }) {
-  const [runs, setRuns] = useState<ApiWorkflowRun[] | null>(null);
-  const [health, setHealth] = useState<ApiWorkflowHealth | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
+/* --------------------------------------------------- workflow assurance */
 
-  useEffect(() => {
-    const controller = new AbortController();
-    getWorkflowRuns(workflowId, 20, controller.signal)
-      .then((r) => { setRuns(r.runs); setHealth(r.health); })
-      .catch((e) => { if (!isAbortError(e)) setUnavailable(true); });
-    return () => controller.abort();
-  }, [workflowId]);
+// The tier look — one place, so the ledger and the schedule chip agree.
+const TIER_LOOK: Record<string, { fg: string; bg: string; border: string; label: string }> = {
+  ready: { fg: "text-accent", bg: "bg-accent/[0.06]", border: "border-accent/30", label: "Earned autonomy" },
+  supervised: { fg: "text-amber-300", bg: "bg-amber-300/[0.05]", border: "border-amber-300/25", label: "Supervised" },
+  in_the_loop: { fg: "text-red-300", bg: "bg-red-400/[0.05]", border: "border-red-400/25", label: "In the loop" },
+  insufficient: { fg: "text-white/55", bg: "bg-white/[0.03]", border: "border-white/12", label: "Building evidence" },
+};
 
-  if (unavailable || runs === null) return null; // silent until it has facts
-  if (runs.length === 0) return null;            // no history yet — nothing to say
+function tierIcon(tier: string, size = 14) {
+  if (tier === "ready") return <BadgeCheck size={size} />;
+  if (tier === "insufficient") return <Gauge size={size} />;
+  return <ShieldQuestion size={size} />;
+}
 
+/** The autonomy verdict as a compact chip, shown at the schedule decision. */
+function AutonomyChip({ verdict }: { verdict: ApiAutonomyVerdict }) {
+  const look = TIER_LOOK[verdict.tier] ?? TIER_LOOK.insufficient;
+  return (
+    <div className={cn("mb-3 flex items-start gap-2 rounded-lg border px-2.5 py-2", look.border, look.bg)}
+         title={verdict.next}>
+      <span className={cn("mt-[1px] shrink-0", look.fg)}>{tierIcon(verdict.tier, 13)}</span>
+      <div className="min-w-0">
+        <span className={cn("text-[11.5px] font-medium", look.fg)}>{verdict.headline}</span>
+        <p className="mt-0.5 text-[10.5px] leading-snug text-white/45">{verdict.reason}</p>
+      </div>
+    </div>
+  );
+}
+
+/** Workflow Assurance — the measured, VERIFIED reliability ledger and the
+ * evidence-backed autonomy verdict. This is the number a buyer signs against,
+ * computed from data only PerceptAI captures (verified outcomes + calibrated
+ * confidence). */
+function AssuranceCard({ data }: { data: AssuranceData | null }) {
+  if (data === null) return null;                 // silent until it has facts
+  const { assurance: a, runs } = data;
+  if (a.sample_size === 0) return null;           // no history yet — nothing to prove
+
+  const look = TIER_LOOK[a.autonomy.tier] ?? TIER_LOOK.insufficient;
+  const pct = Math.round(a.verified_success_rate * 100);
+  const calibrated = a.calibration_error != null;
+  const calibPct = calibrated ? Math.round((1 - (a.calibration_error ?? 0)) * 100) : null;
   const statusTone: Record<string, string> = {
     completed: "bg-accent", failed: "bg-red-400", unverified: "bg-amber-300",
     running: "bg-sky-300", queued: "bg-white/40", claimed: "bg-white/40",
   };
 
   return (
-    <section className="glass rounded-xl p-4" data-testid="workflow-health">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
-          <Activity size={12} /> Runs
-        </h2>
-        {health && health.total > 0 && (
-          <span className={cn("font-mono text-[11px] tabular-nums",
-                              (health.success_rate ?? 0) >= 0.9 ? "text-accent"
-                                : (health.success_rate ?? 0) >= 0.6 ? "text-amber-300" : "text-red-300")}>
-            {Math.round((health.success_rate ?? 0) * 100)}% success · {health.total} runs
-          </span>
-        )}
+    <section className={cn("rounded-xl border overflow-hidden", look.border, look.bg)}
+             data-testid="workflow-assurance">
+      {/* Verdict banner */}
+      <div className="flex items-start gap-2.5 px-4 py-3 border-b border-white/[0.06]">
+        <span className={cn("mt-0.5 shrink-0", look.fg)}>{tierIcon(a.autonomy.tier)}</span>
+        <div className="min-w-0">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-white/40">Assurance</div>
+          <div className={cn("text-[14px] font-semibold", look.fg)}>{a.autonomy.headline}</div>
+          <p className="mt-1 text-[11.5px] leading-snug text-white/55">{a.autonomy.reason}</p>
+          <p className="mt-1 text-[10.5px] leading-snug text-white/40">
+            <span className="text-white/30">Next: </span>{a.autonomy.next}
+          </p>
+        </div>
       </div>
-      <div className="space-y-1">
-        {runs.slice(0, 8).map((run) => (
+
+      {/* Measured facts */}
+      <div className="grid grid-cols-2 divide-x divide-white/[0.06] border-b border-white/[0.06]">
+        <div className="px-4 py-3">
+          <div className="font-mono text-[9px] uppercase tracking-wider text-white/35">Verified success</div>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className={cn("text-[24px] font-semibold tabular-nums leading-none",
+                                pct >= 90 ? "text-accent" : pct >= 70 ? "text-amber-300" : "text-red-300")}>{pct}%</span>
+            <span className="text-[10px] text-white/35">/ {a.sample_size} runs</span>
+          </div>
+          <div className="mt-1 text-[9.5px] text-white/30">outcome checked, not just “no error”</div>
+        </div>
+        <div className="px-4 py-3">
+          <div className="font-mono text-[9px] uppercase tracking-wider text-white/35">Calibration</div>
+          <div className="mt-0.5 text-[24px] font-semibold tabular-nums leading-none text-white/85">
+            {calibPct != null ? `${calibPct}%` : "—"}
+          </div>
+          <div className="mt-1 text-[9.5px] text-white/30">
+            {calibrated ? "confidence matches reality" : "no confidence data yet"}
+          </div>
+        </div>
+      </div>
+
+      {/* Failure taxonomy — why it fails, when it fails */}
+      {a.failure_taxonomy.length > 0 && (
+        <div className="px-4 py-3 border-b border-white/[0.06]">
+          <div className="mb-1.5 font-mono text-[9px] uppercase tracking-wider text-white/35">Why it fails</div>
+          <div className="flex flex-wrap gap-1.5">
+            {a.failure_taxonomy.slice(0, 5).map((f) => (
+              <span key={f.type} className="inline-flex items-center gap-1 rounded-md border border-white/[0.09] px-1.5 py-0.5 font-mono text-[9.5px] text-white/55">
+                {f.type.replace(/_/g, " ")}
+                <span className="text-white/30">×{f.count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent runs — click through to the per-run Proof of Outcome */}
+      <div className="px-3 py-2.5">
+        <div className="mb-1 px-1 font-mono text-[9px] uppercase tracking-wider text-white/30">Recent runs</div>
+        {runs.slice(0, 6).map((run) => (
           <Link key={run.id} href={`/dashboard/sessions/${run.id}`}
                 className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-white/[0.03] transition-colors">
             <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", statusTone[run.status] ?? "bg-white/40")} />
             <span className="font-mono text-[11px] text-white/60">{run.status}</span>
-            {run.retry_of && (
-              <span className="rounded border border-white/15 px-1 font-mono text-[9px] uppercase tracking-wider text-white/40">
-                retry {run.retry_count ?? ""}
-              </span>
-            )}
             {run.origin === "schedule" && !run.retry_of && (
-              <span className="rounded border border-white/15 px-1 font-mono text-[9px] uppercase tracking-wider text-white/40">
-                scheduled
-              </span>
+              <span className="rounded border border-white/15 px-1 font-mono text-[9px] uppercase tracking-wider text-white/40">scheduled</span>
+            )}
+            {run.retry_of && (
+              <span className="rounded border border-white/15 px-1 font-mono text-[9px] uppercase tracking-wider text-white/40">retry {run.retry_count ?? ""}</span>
             )}
             <span className="ml-auto font-mono text-[10px] text-white/30 tabular-nums shrink-0">
               {new Date(run.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}

@@ -21,6 +21,7 @@ import { MetricCard } from "./metric-card";
 import { PerceptionCard } from "./perception-card";
 import { ReasoningCard } from "./reasoning-card";
 import { TrustTimeline } from "./trust-timeline";
+import { ProofOfOutcome } from "./proof-of-outcome";
 import { ReportCard } from "./report-card";
 import { StepTimeline } from "./step-timeline";
 import { RuntimeLogs } from "./runtime-logs";
@@ -207,12 +208,17 @@ function Loaded({
         />
       </div>
 
-      {/* What to do next — surfaced first when the run didn't succeed */}
+      {/* Proof of outcome — the executive answer: did it work, can I trust it,
+          was it handled safely, and here's a copyable audit record. Leads
+          everything, on every run (verified, unverified, or honestly failed). */}
+      {session.status !== "running" && <ProofOfOutcome session={session} />}
+
+      {/* What to do next — surfaced when the run didn't succeed */}
       {(session.status === "failed" || session.status === "unverified") && (
         <RemediationCard failureType={(session.result as { failure_type?: string } | undefined)?.failure_type} />
       )}
 
-      {/* The deliverable — leads everything else */}
+      {/* The deliverable detail — beneath the proof */}
       {session.result?.report && <ReportCard report={session.result.report} />}
 
       {/* How the agent saw */}

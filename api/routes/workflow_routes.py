@@ -108,6 +108,45 @@ async def create_workflow(body: WorkflowCreateRequest,
     return created
 
 
+@router.get("/autonomy")
+async def fleet_autonomy(org_id: Optional[str] = None,
+                         current_user: dict = Depends(get_current_user)):
+    """The org's AUTONOMY POSTURE — the command center's trust pillar. Rolls
+    per-workflow assurance across every published task workflow into one
+    reading: how much of the autonomous workforce has earned self-operation,
+    and which workflows look reliable but aren't trustworthy (confident liars).
+
+    Registered BEFORE /{workflow_id} so 'autonomy' is never taken for an id.
+    Two queries (workflows + their sessions), grouped and computed in Python —
+    the same assurance math at fleet scale. Never a parallel system."""
+    db = get_service_db()
+    resolved = _resolve_org(db, current_user, org_id, "view")
+    try:
+        workflows = db.table("workflows").select("id, name, mode, status").eq(
+            "org_id", resolved).eq("status", "published").execute().data or []
+    except Exception:
+        workflows = []
+    workflows = [w for w in workflows if w.get("mode") != "mission"]
+    wf_ids = [w["id"] for w in workflows]
+
+    sessions_by_wf: dict[str, list] = {wid: [] for wid in wf_ids}
+    if wf_ids:
+        try:
+            rows = db.table("sessions").select(
+                "workflow_id, status, error, execution_time, result").in_(
+                "workflow_id", wf_ids).order(
+                "created_at", desc=True).limit(1000).execute().data or []
+            for r in rows:
+                sessions_by_wf.setdefault(r.get("workflow_id"), []).append(r)
+        except Exception:
+            pass
+
+    from assurance import fleet_posture
+    packed = [{"id": w["id"], "name": w.get("name", ""),
+               "sessions": sessions_by_wf.get(w["id"], [])} for w in workflows]
+    return fleet_posture(packed)
+
+
 @router.get("/{workflow_id}")
 async def workflow_detail(workflow_id: str, org_id: Optional[str] = None,
                           current_user: dict = Depends(get_current_user)):
@@ -189,12 +228,20 @@ async def workflow_runs(workflow_id: str, org_id: Optional[str] = None,
     resolved = _resolve_org(db, current_user, org_id, "view")
     _get_workflow(db, workflow_id, resolved)
     limit = max(1, min(200, limit))
+    # `result` is selected so assurance can read each run's reported confidence
+    # and typed failure_type — the raw material for the verified reliability
+    # number and its calibration. A separate lean select keeps the runs list
+    # (rendered as a table) free of the heavy result JSON.
+    fields = ("id, status, origin, error, execution_time, created_at, "
+              "completed_at, retry_of, retry_count, runner_id")
     try:
-        rows = db.table("sessions").select(
-            "id, status, origin, error, execution_time, created_at, "
-            "completed_at, retry_of, retry_count, runner_id").eq(
+        rows = db.table("sessions").select(fields).eq(
             "workflow_id", workflow_id).order(
             "created_at", desc=True).limit(limit).execute().data or []
+        assurance_rows = db.table("sessions").select(
+            "status, error, execution_time, result").eq(
+            "workflow_id", workflow_id).order(
+            "created_at", desc=True).limit(200).execute().data or []
     except Exception as e:
         if "workflow_id" in str(e).lower():
             raise HTTPException(503, "run history unavailable — apply "
@@ -203,6 +250,8 @@ async def workflow_runs(workflow_id: str, org_id: Optional[str] = None,
     terminal = [r for r in rows if r.get("status") in
                 ("completed", "failed", "unverified")]
     completed = sum(1 for r in terminal if r["status"] == "completed")
+
+    from assurance import compute_assurance
     return {
         "runs": rows,
         "health": {
@@ -212,6 +261,8 @@ async def workflow_runs(workflow_id: str, org_id: Optional[str] = None,
             "unverified": sum(1 for r in terminal if r["status"] == "unverified"),
             "success_rate": round(completed / len(terminal), 3) if terminal else None,
         },
+        # The measured reliability ledger + evidence-backed autonomy verdict.
+        "assurance": compute_assurance(assurance_rows),
     }
 
 
