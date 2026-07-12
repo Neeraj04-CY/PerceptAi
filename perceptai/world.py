@@ -47,9 +47,16 @@ class WorldModel:
     # ----------------------------------------------------------- snapshot
 
     def snapshot(self, mode: str = "fast", force_refresh: bool = False,
-                 region=None) -> WorldState:
+                 region=None, text_critical: bool = False) -> WorldState:
         """Perceive the environment. fast = cheap providers only;
-        full = escalate to expensive providers (vision LLM)."""
+        full = escalate to expensive providers (vision LLM).
+
+        Adaptive perception: OCR is deferred behind the structured sources
+        (UIA/DOM). When they already produced enough elements, the snapshot
+        skips OCR — measured at ~7s/frame against UIA's ~170ms for the same
+        grounding. Pixels remain the floor: `text_critical` forces OCR
+        (read_screen, find-miss retries), full mode always includes it, and
+        a sparse structured view falls back to OCR automatically."""
         now = time.time()
         if (
             not force_refresh
@@ -62,37 +69,59 @@ class WorldModel:
         frame = FrameContext(timestamp=now, region=region, force_refresh=force_refresh)
         observations = []
         reports: list[ProviderReport] = []
+        deferred_ocr: Optional[PerceptionProvider] = None
         for provider in self._providers:
             if mode != "full" and provider.cost == COST_EXPENSIVE:
                 continue
-            try:
-                if not provider.available():
-                    continue
-            except Exception:
+            if (
+                provider.name == "ocr"
+                and mode != "full"
+                and not text_critical
+                and self._config.adaptive_perception
+            ):
+                deferred_ocr = provider
                 continue
-            source = provider.source.value if hasattr(provider.source, "value") else str(provider.source)
-            t0 = time.time()
-            try:
-                found = provider.observe(frame) or []
-                report = ProviderReport(
-                    name=provider.name, source=source, ok=True,
-                    observations=len(found),
-                    latency_ms=round((time.time() - t0) * 1000, 1),
-                )
-                observations.extend(found)
-            except Exception as e:
-                report = ProviderReport(
-                    name=provider.name, source=source, ok=False,
-                    latency_ms=round((time.time() - t0) * 1000, 1), error=str(e),
-                )
-            reports.append(report)
-            self._record(report)
+            self._observe_one(provider, frame, observations, reports)
+
+        if deferred_ocr is not None:
+            structured = sum(
+                1 for o in observations
+                if o.role not in ("window", "cursor", "screen", "process")
+            )
+            if structured < self._config.ocr_skip_min_elements:
+                self._observe_one(deferred_ocr, frame, observations, reports)
+            # else: skipped — structured sources are rich enough this frame.
 
         world = self._build(observations, reports, frame, mode)
         self.last_diff = self.diff(self._last, world)
         self._last = world
         self._snapshots += 1
         return world
+
+    def _observe_one(self, provider: PerceptionProvider, frame: FrameContext,
+                     observations: list, reports: list[ProviderReport]) -> None:
+        try:
+            if not provider.available():
+                return
+        except Exception:
+            return
+        source = provider.source.value if hasattr(provider.source, "value") else str(provider.source)
+        t0 = time.time()
+        try:
+            found = provider.observe(frame) or []
+            report = ProviderReport(
+                name=provider.name, source=source, ok=True,
+                observations=len(found),
+                latency_ms=round((time.time() - t0) * 1000, 1),
+            )
+            observations.extend(found)
+        except Exception as e:
+            report = ProviderReport(
+                name=provider.name, source=source, ok=False,
+                latency_ms=round((time.time() - t0) * 1000, 1), error=str(e),
+            )
+        reports.append(report)
+        self._record(report)
 
     def _build(self, observations, reports, frame: FrameContext, mode: str) -> WorldState:
         windows: list[WindowInfo] = []

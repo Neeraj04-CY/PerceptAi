@@ -394,13 +394,25 @@ class DomProvider(PerceptionProvider):
     source = SourceType.DOM
     cost = COST_CHEAP
 
+    # After a round that finds no debuggable browser, skip the next few
+    # snapshots instead of paying the connect timeout on every one (measured:
+    # ~1.5s/snapshot for zero observations). The browser can appear mid-run
+    # (a navigate step), so this is a backoff, never a permanent disable.
+    _BACKOFF_SNAPSHOTS = 3
+
     def __init__(self, config: EngineConfig, windows, reader=None):
         self._config = config
         self._windows = windows
         self._reader = reader  # injected DomReader; built lazily by default
+        self._skip = 0
 
     def available(self) -> bool:
-        return bool(self._config.dom_enabled)
+        if not self._config.dom_enabled:
+            return False
+        if self._skip > 0:
+            self._skip -= 1
+            return False
+        return True
 
     def _get_reader(self):
         if self._reader is None:
@@ -416,6 +428,7 @@ class DomProvider(PerceptionProvider):
             timeout_s=self._config.dom_time_budget_s,
         )
         if snapshot is None:
+            self._skip = self._BACKOFF_SNAPSHOTS
             return []
         ox, oy = snapshot.origin
         window = snapshot.title

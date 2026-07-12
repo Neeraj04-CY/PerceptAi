@@ -242,3 +242,28 @@ def test_ungrounded_click_contributes_no_grounded_check():
     verifier = Verifier(FakeWindows([]))
     result = verifier.verify(TaskContext("click"), [_ok("click", find="Submit")])
     assert all(not c.name.startswith("action_grounded:") for c in result.checks)
+
+
+def test_failed_criterion_outweighs_grounding_alone():
+    """The Spotify case, pinned: a click grounded at 0.99 whose stated
+    completion criterion is judged unmet (and whose effect was absent)
+    must NOT verify — 'clicked toward it' is not 'achieved it'."""
+    llm = _JudgeLLM('[{"criterion": 1, "met": true, "reason": "app open"},'
+                    ' {"criterion": 2, "met": false, "reason": "no evidence it is playing"}]')
+    verifier = Verifier(FakeWindows(["Spotify Free"]), llm, EngineConfig(groq_api_key="x"))
+    ctx = TaskContext("open spotify and play the playlist")
+    ctx.goal = GoalSpec(
+        intent="open spotify and play the playlist",
+        output_format="action_confirmation",
+        completion_criteria=["Spotify is open", "The playlist is playing"],
+    )
+    steps = [
+        _ok("focus_window", window="Spotify Free"),
+        _ok("click", find="playlist",
+            data={"element": "Low Cortisol - playlist", "confidence": 0.99,
+                  "sources": ["uia", "ocr"],
+                  "effect": {"changed": False, "summary": "3 element(s) new, 4 gone"}}),
+    ]
+    result = verifier.verify(ctx, steps)
+    assert not result.verified          # honest: Review, not Completed
+    assert result.confidence < 0.5

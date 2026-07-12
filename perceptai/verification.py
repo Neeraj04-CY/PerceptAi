@@ -42,6 +42,12 @@ _VERIFIED_SUPPORT_FLOOR = 0.5
 # Advisory failures contradict at a fraction of their strength — they are
 # observations ("no visible change"), not proofs of failure.
 _ADVISORY_CONTRADICTION = 0.4
+# A judged completion criterion failing is the strongest advisory
+# contradiction we have: it is the user's own definition of done, judged
+# unmet. It still never gates alone (action goals keep advisory criteria),
+# but it weighs more than a mere perception gap — "clicked toward it" must
+# not verify as "achieved it".
+_CRITERION_CONTRADICTION = 0.5
 
 # Fixed source-weights for derived checks (grounded actions are measured).
 _STRENGTH_WINDOW_EXISTS = 0.9
@@ -220,7 +226,9 @@ class Verifier:
         support = 1.0 - support
         for c in checks:
             if not c.passed:
-                factor = _clamp(c.strength) * (1.0 if c.critical else _ADVISORY_CONTRADICTION)
+                advisory = (_CRITERION_CONTRADICTION if c.name.startswith("criterion:")
+                            else _ADVISORY_CONTRADICTION)
+                factor = _clamp(c.strength) * (1.0 if c.critical else advisory)
                 support *= 1.0 - factor
         return round(min(support, _CONFIDENCE_CAP), 3)
 

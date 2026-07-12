@@ -91,4 +91,4 @@ def test_goal_context_reaches_prompt():
     assert "collect prices" in llm.prompt
     assert "Done when: prices collected" in llm.prompt
     assert "$5" in llm.prompt  # known facts injected, marked do-not-re-collect
-    assert "return an empty array" in llm.prompt
+    assert "Return an empty array [] ONLY if" in llm.prompt  # completion-gated finish

@@ -80,6 +80,13 @@ class EngineConfig:
     fast_cache_ttl_s: float = 0.8
     ocr_max_side: int = 960
     screenshot_keep: int = 5
+    # Adaptive perception: skip OCR on a snapshot when the structured
+    # sources (UIA/DOM) already produced enough elements. Measured on real
+    # runs: OCR cost ~7s/snapshot while UIA grounded the same click at 0.99
+    # in ~170ms. Pixels stay the floor — a find-miss retries WITH OCR, and
+    # read_screen always includes it (text_critical).
+    adaptive_perception: bool = True
+    ocr_skip_min_elements: int = 12
 
     # World model — providers
     uia_enabled: bool = True

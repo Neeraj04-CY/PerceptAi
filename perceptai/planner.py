@@ -93,9 +93,10 @@ CURRENT WORLD STATE (fused from UI Automation, OCR and vision; percentages are p
 {windows_context}
 
 Generate the NEXT steps (maximum {self._config.max_plan_steps}) toward the goal.
-If every objective is already achieved, return an empty array: []
+Return an empty array [] ONLY if every objective and completion criterion is VISIBLY satisfied in the CURRENT world state above.
 
 Rules:
+- A criterion about an ongoing state (playing, running, submitted, saved, enabled) counts as achieved ONLY when the current screen shows that state (e.g. a Pause control, a confirmation message, a changed status). Having clicked toward it is NOT enough — if the final state is not visible, plan the remaining step(s) that produce it.
 - Open or focus the target application BEFORE interacting with it.
 - For "find" fields use the EXACT name of an element listed in the world state above. Never invent placeholder text.
 - Prefer elements with higher confidence; elements marked '?' are uncertain.

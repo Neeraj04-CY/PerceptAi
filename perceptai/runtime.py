@@ -73,9 +73,10 @@ class ExecutionEngine:
     # -------------------------------------------------------- world model
 
     def _perceive(self, task: Task, mode: str = "fast",
-                  force_refresh: bool = True) -> WorldState:
+                  force_refresh: bool = True, text_critical: bool = False) -> WorldState:
         """Take a world snapshot and emit it on the canonical stream."""
-        world = self._s.world.snapshot(mode=mode, force_refresh=force_refresh)
+        world = self._s.world.snapshot(mode=mode, force_refresh=force_refresh,
+                                       text_critical=text_critical)
         self._last_world = world
         if self._baseline_world is None:
             self._baseline_world = world
@@ -724,7 +725,7 @@ class ExecutionEngine:
 
         if action == ActionType.READ_SCREEN:
             time.sleep(self._config.settle_before_read_s)
-            world = self._perceive(task)
+            world = self._perceive(task, text_critical=True)  # extraction needs the pixels
             goal_info = str(params.get("find") or context.instruction)
             source = context.sources[-1] if context.sources else (state.current_window or "screen")
             items = self._s.evidence.collect(goal_info, world.screen_text, source)
@@ -845,7 +846,11 @@ class ExecutionEngine:
         """Resolve a query against the live world model. Cheap snapshots
         first; one vision escalation when the fast providers can't see it."""
         for attempt in range(self._config.find_retries):
-            world = self._s.world.snapshot(force_refresh=attempt > 0)
+            # First attempt rides the cheap structured snapshot; a miss
+            # retries WITH OCR before paying for vision — pixels stay the
+            # floor without paying their price on every frame.
+            world = self._s.world.snapshot(force_refresh=attempt > 0,
+                                           text_critical=attempt > 0)
             self._last_world = world
             element = self._s.world.find(world, query)
             if element is not None and element.has_position:
