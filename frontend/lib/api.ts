@@ -962,3 +962,21 @@ export const teachMemory = (lesson: string, subject = "general",
   sendJsonAuth<ApiMemoryLesson>("POST", "/memory/teach", { lesson, subject, kind, scope });
 export const forgetMemory = (id: string) =>
   sendJsonAuth<{ archived: string }>("DELETE", `/memory/${encodeURIComponent(id)}`);
+
+// Workforce Intelligence (Milestone C3) — the workforce's self-review,
+// computed live from measured rows. Findings carry their evidence.
+export interface ApiIntelligenceFinding {
+  kind: "strength" | "struggle" | "automation_opportunity" | "intervention"
+      | "approval_friction" | "policy_candidate";
+  severity: "high" | "medium" | "info";
+  headline: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+}
+export interface ApiIntelligenceBriefing {
+  period_days: number;
+  coverage: { operations_analyzed: number; sufficient: boolean; note: string };
+  findings: ApiIntelligenceFinding[];
+}
+export const getIntelligenceBriefing = (signal?: AbortSignal) =>
+  getJsonAuth<ApiIntelligenceBriefing>("/intelligence/briefing", signal);

@@ -17,10 +17,12 @@ import { lifecycleOf } from "@/lib/lifecycle";
 import {
   AnalyticsSummary,
   ApiFleetAutonomy,
+  ApiIntelligenceBriefing,
   ApiMemoryInsight,
   ApiMemoryLesson,
   getAnalyticsSummary,
   getFleetAutonomy,
+  getIntelligenceBriefing,
   getMemory,
   teachMemory,
 } from "@/lib/api";
@@ -31,6 +33,7 @@ export default function KnowledgePage() {
   const [autonomy, setAutonomy] = useState<ApiFleetAutonomy | null>(null);
   const [lessons, setLessons] = useState<ApiMemoryLesson[]>([]);
   const [insights, setInsights] = useState<ApiMemoryInsight[]>([]);
+  const [briefing, setBriefing] = useState<ApiIntelligenceBriefing | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +49,8 @@ export default function KnowledgePage() {
       getAnalyticsSummary("30d", "all", controller.signal),
       getFleetAutonomy(controller.signal),
       loadMemory(controller.signal),
+      getIntelligenceBriefing(controller.signal)
+        .then(setBriefing).catch(() => { /* optional */ }),
     ]).then(([s, a]) => {
       if (s.status === "fulfilled") setSummary(s.value);
       else if (isAbortError(s.reason)) return;
@@ -80,6 +85,30 @@ export default function KnowledgePage() {
       )}
 
       <MemorySection lessons={lessons} insights={insights} onTaught={() => loadMemory()} />
+
+      {briefing && briefing.findings.length > 0 && (
+        <section className="pt-10">
+          <SectionLabel>The workforce, observed</SectionLabel>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-white/40 max-w-xl">
+            The workforce&apos;s review of itself over the last {briefing.period_days} days —
+            {" "}{briefing.coverage.operations_analyzed} operations analyzed, every finding
+            backed by its evidence.
+          </p>
+          <div className="mt-4 space-y-3.5">
+            {briefing.findings.slice(0, 6).map((f, i) => (
+              <div key={i} className="flex gap-3">
+                <span className={cn("mt-[7px] h-1.5 w-1.5 rounded-full shrink-0",
+                  f.severity === "high" ? "bg-red-400"
+                    : f.severity === "medium" ? "bg-amber-300" : "bg-accent/70")} />
+                <div className="min-w-0">
+                  <div className="text-[13.5px] text-white/85">{f.headline}</div>
+                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-white/45">{f.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {noHistory ? (
         <div className="pb-16 pt-10">
