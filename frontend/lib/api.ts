@@ -1001,3 +1001,21 @@ export interface ApiDiscoveries {
 }
 export const getDiscoveries = (signal?: AbortSignal) =>
   getJsonAuth<ApiDiscoveries>("/intelligence/discoveries", signal);
+
+// The Organizational Record (Phase 3) — grounded search + one timeline.
+export interface ApiSearchHit {
+  type: "lesson" | "workflow" | "operation" | "approval" | "attention" | "audit";
+  id: string;
+  title: string;
+  snippet: string;
+  status: string;
+  when: string | null;
+  relevance: number;
+  ref: { page: string; id?: string };
+}
+export const searchOrg = (q: string, signal?: AbortSignal) =>
+  getJsonAuth<{ query: string; hits: ApiSearchHit[]; sources_skipped: string[]; note: string }>(
+    `/search?q=${encodeURIComponent(q)}`, signal);
+export const getTimeline = (limit = 50, signal?: AbortSignal) =>
+  getJsonAuth<{ entries: Array<Omit<ApiSearchHit, "snippet" | "relevance">>; sources_skipped: string[]; note: string }>(
+    `/timeline?limit=${limit}`, signal);

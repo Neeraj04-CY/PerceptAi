@@ -16,8 +16,10 @@ import {
   Search,
   CornerDownLeft,
   LogOut,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ApiSearchHit, searchOrg } from "@/lib/api";
 
 const OPEN_EVENT = "perceptai:open-palette";
 
@@ -74,20 +76,67 @@ const commands: Command[] = [
   },
 ];
 
+// Grounded organizational search (Phase 3): every hit links back to the
+// record it came from — lessons, workflows, operations, approvals, audit.
+const HIT_ICON: Record<ApiSearchHit["type"], Command["icon"]> = {
+  lesson: Lightbulb, workflow: LibraryBig, operation: History,
+  approval: ShieldCheck, attention: ShieldCheck, audit: Building2,
+};
+
+function hitHref(hit: ApiSearchHit): string {
+  switch (hit.ref.page) {
+    case "workflow": return `/dashboard/studio/${hit.ref.id}`;
+    case "operation": return `/dashboard/sessions/${hit.ref.id}`;
+    case "approvals": return "/dashboard/approvals";
+    case "organization": return "/dashboard/org";
+    default: return "/dashboard/knowledge";
+  }
+}
+
+function hitToCommand(hit: ApiSearchHit): Command {
+  return {
+    id: `hit:${hit.type}:${hit.id}`,
+    label: hit.title,
+    hint: [hit.type, hit.status, hit.snippet].filter(Boolean).join(" · ").slice(0, 110),
+    icon: HIT_ICON[hit.type] ?? Search,
+    run: (router) => router.push(hitHref(hit)),
+  };
+}
+
 export function CommandPalette() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [orgHits, setOrgHits] = useState<ApiSearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Debounced grounded search across the organizational record.
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || q.length < 3) {
+      setOrgHits([]);
+      return;
+    }
+    const controller = new AbortController();
+    const t = setTimeout(() => {
+      searchOrg(q, controller.signal)
+        .then((r) => setOrgHits(r.hits.slice(0, 6)))
+        .catch(() => setOrgHits([]));  // search is additive, never blocking
+    }, 220);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
+  }, [query, open]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return commands;
-    return commands.filter((c) =>
+    const nav = !q ? commands : commands.filter((c) =>
       (c.keywords || c.label).toLowerCase().includes(q)
     );
-  }, [query]);
+    return [...nav, ...orgHits.map(hitToCommand)];
+  }, [query, orgHits]);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -168,7 +217,7 @@ export function CommandPalette() {
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search pages and actions…"
+                placeholder="Search your organization — workflows, lessons, operations, approvals…"
                 className="h-12 w-full bg-transparent text-[14px] text-white placeholder:text-white/30 outline-none"
               />
               <kbd className="rounded border border-white/[0.1] px-1.5 py-0.5 font-mono text-[10px] text-white/35">
