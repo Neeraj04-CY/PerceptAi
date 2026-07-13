@@ -13,12 +13,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { cn, isAbortError } from "@/lib/utils";
+import { lifecycleOf } from "@/lib/lifecycle";
 import {
   ApiFleetAutonomy,
   ApiPack,
   ApiWorkflow,
   ApiWorkflowCard,
-  AutonomyTier,
   getFleetAutonomy,
   getPacks,
   getWorkflows,
@@ -104,13 +104,19 @@ export default function WorkforcePage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <header className="pt-6 pb-10">
-        <h1 className="text-[24px] font-semibold tracking-tight text-white">Workforce</h1>
-        <p className="mt-1 text-[13px] text-white/40">
-          {active.length > 0
-            ? <>Your AI employees — trust is measured, autonomy is earned.</>
-            : <>Five operators, ready to hire. Trust is measured, autonomy is earned.</>}
-        </p>
+      <header className="pt-6 pb-10 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[24px] font-semibold tracking-tight text-white">Workforce</h1>
+          <p className="mt-1 text-[13px] text-white/40">
+            {active.length > 0
+              ? <>Your AI employees — trust is measured, autonomy is earned.</>
+              : <>Five operators, ready to hire. Trust is measured, autonomy is earned.</>}
+          </p>
+        </div>
+        <Link href="/dashboard/templates"
+              className="shrink-0 inline-flex items-center gap-2 rounded-lg bg-accent text-black px-4 h-9 text-[13px] font-medium hover:shadow-[0_0_32px_-8px_rgba(0,255,133,0.6)] transition-shadow">
+          Hire <ArrowRight size={13} />
+        </Link>
       </header>
 
       {error && (
@@ -129,13 +135,6 @@ export default function WorkforcePage() {
     </div>
   );
 }
-
-const TIER_WORD: Record<AutonomyTier, { word: string; cls: string }> = {
-  ready: { word: "runs unattended", cls: "text-accent" },
-  supervised: { word: "supervised", cls: "text-amber-300" },
-  in_the_loop: { word: "human in the loop", cls: "text-amber-300" },
-  insufficient: { word: "building track record", cls: "text-white/45" },
-};
 
 function EmployeeCard({ employee }: { employee: Employee }) {
   const hired = employee.workflows.length > 0;
@@ -193,13 +192,11 @@ function EmployeeCard({ employee }: { employee: Employee }) {
       {hired && (
         <div className="mt-5 space-y-1.5">
           {employee.workflows.slice(0, 4).map(({ workflow, card }) => {
-            const tier = card?.tier ? TIER_WORD[card.tier] : null;
+            const life = lifecycleOf(card?.tier ?? null, card, workflow.status);
             return (
               <Link key={workflow.id} href={`/dashboard/studio/${workflow.id}`}
                     className="group flex items-center gap-3 rounded-lg px-3 -mx-3 py-2 hover:bg-white/[0.02] transition-colors">
-                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0",
-                  card?.tier === "ready" ? "bg-accent"
-                    : workflow.status === "published" ? "bg-amber-300/70" : "bg-white/25")} />
+                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", life.dot)} />
                 <span className="flex-1 min-w-0 truncate text-[13.5px] text-white/75 group-hover:text-white">
                   {workflow.name}
                 </span>
@@ -208,9 +205,8 @@ function EmployeeCard({ employee }: { employee: Employee }) {
                     {Math.round(card.verified_success_rate * 100)}% · {card.sample_size}
                   </span>
                 )}
-                <span className={cn("font-mono text-[9.5px] uppercase tracking-[0.1em] shrink-0",
-                                    tier ? tier.cls : "text-white/30")}>
-                  {tier ? tier.word : workflow.status}
+                <span className={cn("font-mono text-[9.5px] uppercase tracking-[0.1em] shrink-0", life.cls)}>
+                  {life.stage}
                 </span>
               </Link>
             );

@@ -8,36 +8,37 @@ import {
   Sunrise,
   Users,
   History,
-  LibraryBig,
+  BookOpen,
   Fingerprint,
   ShieldCheck,
-  Lightbulb,
+  Building2,
   Settings2,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// The workforce IA (Phase 2): six surfaces, each answering one question.
-// `matches` claims legacy route families so detail pages highlight their
-// section (e.g. a session detail lights up Operations).
+// The business hierarchy (Milestone C): everything in primary navigation
+// helps run a business — nothing else. Hiring (templates) lives under
+// Workforce; analytics detail behind Knowledge. `matches` claims legacy
+// route families so detail pages highlight their section.
 const nav = [
   { label: "Today", href: "/dashboard", icon: Sunrise, testid: "nav-home", enabled: true,
     matches: [] as string[] },
   { label: "Workforce", href: "/dashboard/workforce", icon: Users, testid: "nav-workforce", enabled: true,
-    matches: [] as string[] },
+    matches: ["/dashboard/templates", "/dashboard/studio"] },
   { label: "Operations", href: "/dashboard/operations", icon: History, testid: "nav-operations", enabled: true,
     matches: ["/dashboard/sessions", "/dashboard/missions", "/dashboard/run"] },
-  { label: "Templates", href: "/dashboard/templates", icon: LibraryBig, testid: "nav-templates", enabled: true,
-    matches: ["/dashboard/studio"] },
+  { label: "Knowledge", href: "/dashboard/knowledge", icon: BookOpen, testid: "nav-knowledge", enabled: true,
+    matches: ["/dashboard/answers", "/dashboard/analytics"] },
   { label: "Evidence", href: "/dashboard/evidence", icon: Fingerprint, testid: "nav-evidence", enabled: true,
     matches: [] as string[] },
   { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true,
     matches: [] as string[] },
-  { label: "Answers", href: "/dashboard/answers", icon: Lightbulb, testid: "nav-answers", enabled: true,
-    matches: ["/dashboard/analytics"] },
+  { label: "Organization", href: "/dashboard/org", icon: Building2, testid: "nav-org", enabled: true,
+    matches: [] as string[] },
   { label: "Settings", href: "/dashboard/settings", icon: Settings2, testid: "nav-settings", enabled: true,
-    matches: ["/dashboard/org", "/dashboard/keys", "/dashboard/runners"] },
+    matches: ["/dashboard/keys", "/dashboard/runners"] },
 ];
 
 function isActive(pathname: string, href: string, matches: string[] = []): boolean {

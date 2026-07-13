@@ -353,8 +353,8 @@ function Standing({ autonomy }: { autonomy: ApiFleetAutonomy | null }) {
         <span className="text-white/80">{autonomy.earned_autonomy}</span> of{" "}
         <span className="text-white/80">{autonomy.graded_workflows}</span> graded workflows
         have earned unattended autonomy.{" "}
-        <Link href="/dashboard/answers" className="text-accent/80 hover:text-accent">
-          See what&apos;s improving <ArrowRight size={11} className="inline" />
+        <Link href="/dashboard/knowledge" className="text-accent/80 hover:text-accent">
+          See what it has learned <ArrowRight size={11} className="inline" />
         </Link>
       </p>
     </section>

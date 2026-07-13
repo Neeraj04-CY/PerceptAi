@@ -40,10 +40,10 @@ const nav: Array<{ label: string; href: string; icon: Command["icon"]; hint: str
   { label: "Workforce", href: "/dashboard/workforce", icon: Users, hint: "Your AI employees" },
   { label: "Assign work", href: "/dashboard/run", icon: PlayCircle, hint: "Brief your workforce and watch it work" },
   { label: "Operations", href: "/dashboard/operations", icon: History, hint: "The work record" },
+  { label: "Knowledge", href: "/dashboard/knowledge", icon: Lightbulb, hint: "What the workforce has learned" },
   { label: "Evidence", href: "/dashboard/evidence", icon: Fingerprint, hint: "Proof for every action" },
-  { label: "Business Templates", href: "/dashboard/templates", icon: LibraryBig, hint: "Hire for a role" },
+  { label: "Hire (Business Templates)", href: "/dashboard/templates", icon: LibraryBig, hint: "Hire for a role" },
   { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, hint: "Decisions waiting on you" },
-  { label: "Answers", href: "/dashboard/answers", icon: Lightbulb, hint: "What's working, what's improving" },
   { label: "Settings", href: "/dashboard/settings", icon: Settings2, hint: "Workspace, people, policies, machines" },
 ];
 
