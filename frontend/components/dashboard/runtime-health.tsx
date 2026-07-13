@@ -42,13 +42,13 @@ export function RuntimeHealth({ compact = false }: { compact?: boolean }) {
 
   const meta: Record<Status, { label: string; dot: string; text: string }> = {
     loading: { label: "checking…", dot: "bg-white/30", text: "text-white/40" },
-    healthy: { label: "runtime online", dot: "bg-accent", text: "text-white/60" },
+    healthy: { label: "workforce online", dot: "bg-accent", text: "text-white/60" },
     degraded: {
-      label: health && !health.engine ? "engine offline" : "degraded",
+      label: health && !health.engine ? "execution offline" : "degraded",
       dot: "bg-amber-300",
       text: "text-amber-200/80",
     },
-    offline: { label: "api unreachable", dot: "bg-red-400", text: "text-red-300/80" },
+    offline: { label: "unreachable", dot: "bg-red-400", text: "text-red-300/80" },
   };
   const m = meta[status];
 

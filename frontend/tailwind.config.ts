@@ -20,7 +20,7 @@ const config: Config = {
         background: "#050505",
         foreground: "#FAFAFA",
         accent: {
-          DEFAULT: "#00FF85",
+          DEFAULT: "#34D399",
           foreground: "#050505",
         },
         muted: {

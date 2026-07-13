@@ -27,7 +27,7 @@ export function TerminalCard() {
 
   return (
     <div
-      className="relative rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-xl overflow-hidden shadow-[0_20px_80px_-30px_rgba(0,255,133,0.25)]"
+      className="relative rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-xl overflow-hidden shadow-[0_20px_80px_-30px_rgba(52,211,153,0.25)]"
       data-testid="terminal-card"
     >
       {/* Header */}

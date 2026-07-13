@@ -92,7 +92,7 @@ export function Pricing() {
               data-testid={`pricing-card-${p.name.toLowerCase()}`}
               className={`relative rounded-3xl p-7 md:p-9 transition-all duration-500 backdrop-blur-xl ${
                 p.highlight
-                  ? "border border-accent/40 bg-accent/[0.04] shadow-[0_30px_120px_-40px_rgba(0,255,133,0.4)]"
+                  ? "border border-accent/40 bg-accent/[0.04] shadow-[0_30px_120px_-40px_rgba(52,211,153,0.25)]"
                   : "border border-white/10 bg-white/[0.03] hover:border-white/20"
               }`}
             >

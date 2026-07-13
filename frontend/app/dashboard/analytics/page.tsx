@@ -37,10 +37,10 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { cn, isAbortError } from "@/lib/utils";
 
 const COLORS = {
-  success: "#00FF85",
+  success: "#34D399",
   attention: "#E8C44A",
   failure: "#FF3B3B",
-  accent: "#00FF85",
+  accent: "#34D399",
   ideal: "rgba(255,255,255,0.32)",
 };
 
@@ -600,7 +600,7 @@ function EmptyState({ onRetry }: { onRetry: () => void }) {
       </p>
       <div className="mt-5 flex items-center gap-2.5">
         <Link href="/dashboard/run"
-              className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 h-9 text-[13px] font-medium text-black transition-shadow hover:shadow-[0_0_36px_-8px_rgba(0,255,133,0.55)]">
+              className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 h-9 text-[13px] font-medium text-black transition-shadow hover:shadow-[0_0_36px_-8px_rgba(52,211,153,0.35)]">
           <PlayCircle size={14} /> Run your first task
         </Link>
         <button onClick={onRetry}

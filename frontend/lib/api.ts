@@ -717,8 +717,8 @@ export const getSessionEvents = (id: string, afterSeq = 0, signal?: AbortSignal)
 // Approvals
 export const getApprovals = (status = "pending", signal?: AbortSignal) =>
   getJsonAuth<ApiApproval[]>(`/approvals?status=${status}`, signal);
-export const decideApproval = (id: string, decision: "approved" | "denied", reason = "") =>
-  sendJsonAuth<{ id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, reason });
+export const decideApproval = (id: string, decision: "approved" | "denied", reason = "", lesson = "") =>
+  sendJsonAuth<{ id: string; status: string }>("POST", `/approvals/${id}/decide`, { decision, reason, lesson });
 
 // Workflows (Agent Studio)
 export const getWorkflows = (signal?: AbortSignal) => getJsonAuth<ApiWorkflow[]>("/workflows", signal);

@@ -51,7 +51,7 @@ export function TaskInput({ running, onRun, onStop, apiKeyValue, initialTask }: 
     <div
       className={cn(
         "relative rounded-xl border bg-white/[0.03] backdrop-blur-xl transition-all duration-300",
-        focused ? "border-accent/35 shadow-[0_0_0_3px_rgba(0,255,133,0.06)]" : "border-white/[0.08]"
+        focused ? "border-accent/35 shadow-[0_0_0_3px_rgba(52,211,153,0.06)]" : "border-white/[0.08]"
       )}
       data-testid="task-input"
     >
@@ -143,7 +143,7 @@ function RunButton({
         "relative inline-flex items-center gap-2 h-10 px-5 rounded-full text-[13px] font-medium transition-all duration-300 overflow-hidden",
         running
           ? "bg-white/[0.04] border border-white/[0.10] text-white hover:bg-white/[0.06]"
-          : "bg-accent text-black hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.6)]",
+          : "bg-accent text-black hover:shadow-[0_0_40px_-8px_rgba(52,211,153,0.35)]",
         disabled && !running && "opacity-40 cursor-not-allowed"
       )}
     >

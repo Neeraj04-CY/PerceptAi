@@ -169,7 +169,7 @@ export default function WorkflowEditorPage() {
             <UploadCloud size={12} /> {publishing ? "Publishing…" : "Publish"}
           </button>
           <button onClick={() => setRunOpen(true)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-4 text-[12px] font-medium text-black hover:shadow-[0_0_28px_-8px_rgba(0,255,133,0.6)] transition-shadow">
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-4 text-[12px] font-medium text-black hover:shadow-[0_0_28px_-8px_rgba(52,211,153,0.35)] transition-shadow">
             <Play size={12} strokeWidth={2.6} fill="currentColor" /> Run
           </button>
         </div>
@@ -274,7 +274,7 @@ export default function WorkflowEditorPage() {
                     next_run_at: e.target.checked ? new Date().toISOString() : undefined,
                   },
                 })}
-                className="h-3.5 w-3.5 accent-[#00ff85]"
+                className="h-3.5 w-3.5 accent-[#34d399]"
               />
               <span className="text-[12px] text-white/70">Run on a schedule</span>
             </label>
@@ -432,7 +432,7 @@ function OnFailureEditor({ schedule, onChange }: {
       <label className="mt-2 flex items-center gap-2 cursor-pointer">
         <input type="checkbox" checked={notify}
                onChange={(e) => set({ notify: e.target.checked })}
-               className="h-3.5 w-3.5 accent-[#00ff85]" />
+               className="h-3.5 w-3.5 accent-[#34d399]" />
         <span className="text-[11px] text-white/55">
           Notify when it finally fails (Attention inbox + workspace webhook)
         </span>
@@ -627,7 +627,7 @@ function VariablesEditor({ variables, onChange }: {
                      aria-label={`Variable ${i + 1} default`} />
               <input type="checkbox" checked={variable.required ?? false}
                      onChange={(e) => update(i, { required: e.target.checked })}
-                     className="h-3.5 w-3.5 accent-[#00ff85]"
+                     className="h-3.5 w-3.5 accent-[#34d399]"
                      aria-label={`Variable ${i + 1} required`} />
               <button onClick={() => onChange(variables.filter((_, j) => j !== i))}
                       className="rounded-md p-1.5 text-white/25 hover:text-red-300 hover:bg-red-400/10 transition-colors"

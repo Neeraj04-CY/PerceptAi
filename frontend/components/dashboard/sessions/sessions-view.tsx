@@ -106,7 +106,7 @@ export function SessionsView() {
         <Link
           href="/dashboard/run"
           data-testid="sessions-new-task"
-          className="inline-flex items-center gap-1.5 rounded-full bg-accent text-black h-9 px-4 text-[13px] font-medium hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.55)] transition-shadow"
+          className="inline-flex items-center gap-1.5 rounded-full bg-accent text-black h-9 px-4 text-[13px] font-medium hover:shadow-[0_0_40px_-8px_rgba(52,211,153,0.35)] transition-shadow"
         >
           New Task
           <ArrowRight size={13} />

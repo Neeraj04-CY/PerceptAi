@@ -374,7 +374,7 @@ function FirstHire() {
       </p>
       <div className="mt-8 flex flex-wrap items-center gap-4">
         <Link href="/dashboard/templates"
-              className="inline-flex items-center gap-2 rounded-lg bg-accent text-black px-5 h-11 text-[14px] font-medium hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.6)] transition-shadow">
+              className="inline-flex items-center gap-2 rounded-lg bg-accent text-black px-5 h-11 text-[14px] font-medium hover:shadow-[0_0_40px_-8px_rgba(52,211,153,0.35)] transition-shadow">
           Browse business templates <ArrowRight size={15} />
         </Link>
         <Link href="/dashboard/run" className="text-[13px] text-white/45 hover:text-white transition-colors">

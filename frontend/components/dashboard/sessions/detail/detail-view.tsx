@@ -296,7 +296,7 @@ function ErrorBlock({ message, onRetry }: { message: string; onRetry: () => void
         <button
           onClick={onRetry}
           data-testid="error-retry"
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent text-black px-3.5 h-9 text-[12.5px] font-medium hover:shadow-[0_0_30px_-8px_rgba(0,255,133,0.5)] transition-shadow"
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent text-black px-3.5 h-9 text-[12.5px] font-medium hover:shadow-[0_0_30px_-8px_rgba(52,211,153,0.3)] transition-shadow"
         >
           Retry
         </button>

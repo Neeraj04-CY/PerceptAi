@@ -114,7 +114,7 @@ export default function WorkforcePage() {
           </p>
         </div>
         <Link href="/dashboard/templates"
-              className="shrink-0 inline-flex items-center gap-2 rounded-lg bg-accent text-black px-4 h-9 text-[13px] font-medium hover:shadow-[0_0_32px_-8px_rgba(0,255,133,0.6)] transition-shadow">
+              className="shrink-0 inline-flex items-center gap-2 rounded-lg bg-accent text-black px-4 h-9 text-[13px] font-medium hover:shadow-[0_0_32px_-8px_rgba(52,211,153,0.35)] transition-shadow">
           Hire <ArrowRight size={13} />
         </Link>
       </header>

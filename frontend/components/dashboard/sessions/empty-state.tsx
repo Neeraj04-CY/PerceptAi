@@ -20,7 +20,7 @@ export function EmptyState() {
       <Link
         href="/dashboard"
         data-testid="empty-run-first-task"
-        className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 h-9 text-[13px] font-medium text-black hover:shadow-[0_0_40px_-8px_rgba(0,255,133,0.55)] transition-shadow"
+        className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 h-9 text-[13px] font-medium text-black hover:shadow-[0_0_40px_-8px_rgba(52,211,153,0.35)] transition-shadow"
       >
         Run your first task
         <ArrowRight size={13} />
