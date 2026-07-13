@@ -16,11 +16,13 @@ import { cn, isAbortError } from "@/lib/utils";
 import { lifecycleOf } from "@/lib/lifecycle";
 import {
   AnalyticsSummary,
+  ApiDiscovery,
   ApiFleetAutonomy,
   ApiIntelligenceBriefing,
   ApiMemoryInsight,
   ApiMemoryLesson,
   getAnalyticsSummary,
+  getDiscoveries,
   getFleetAutonomy,
   getIntelligenceBriefing,
   getMemory,
@@ -34,6 +36,7 @@ export default function KnowledgePage() {
   const [lessons, setLessons] = useState<ApiMemoryLesson[]>([]);
   const [insights, setInsights] = useState<ApiMemoryInsight[]>([]);
   const [briefing, setBriefing] = useState<ApiIntelligenceBriefing | null>(null);
+  const [discoveries, setDiscoveries] = useState<ApiDiscovery[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,6 +54,8 @@ export default function KnowledgePage() {
       loadMemory(controller.signal),
       getIntelligenceBriefing(controller.signal)
         .then(setBriefing).catch(() => { /* optional */ }),
+      getDiscoveries(controller.signal)
+        .then((d) => setDiscoveries(d.discoveries)).catch(() => { /* optional */ }),
     ]).then(([s, a]) => {
       if (s.status === "fulfilled") setSummary(s.value);
       else if (isAbortError(s.reason)) return;
@@ -85,6 +90,33 @@ export default function KnowledgePage() {
       )}
 
       <MemorySection lessons={lessons} insights={insights} onTaught={() => loadMemory()} />
+
+      {discoveries.length > 0 && (
+        <section className="pt-10">
+          <SectionLabel>Discoveries</SectionLabel>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-white/40 max-w-xl">
+            The business as a connected system — patterns across departments,
+            applications and approvals, each reproducible from the operational record.
+          </p>
+          <div className="mt-4 space-y-4">
+            {discoveries.slice(0, 5).map((d, i) => (
+              <div key={i} className="flex gap-3">
+                <span className={cn("mt-[7px] h-1.5 w-1.5 rounded-full shrink-0",
+                  d.severity === "high" ? "bg-red-400"
+                    : d.severity === "medium" ? "bg-amber-300" : "bg-accent/70")} />
+                <div className="min-w-0">
+                  <div className="text-[13.5px] text-white/85">{d.headline}</div>
+                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-white/45">{d.detail}</p>
+                  <p className="mt-1 font-mono text-[9.5px] uppercase tracking-[0.12em] text-white/30">
+                    {Math.round(d.confidence * 100)}% confidence
+                    {d.affected_departments.length > 0 && <> · {d.affected_departments.join(" · ")}</>}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {briefing && briefing.findings.length > 0 && (
         <section className="pt-10">

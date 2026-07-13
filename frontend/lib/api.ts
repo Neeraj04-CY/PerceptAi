@@ -980,3 +980,24 @@ export interface ApiIntelligenceBriefing {
 }
 export const getIntelligenceBriefing = (signal?: AbortSignal) =>
   getJsonAuth<ApiIntelligenceBriefing>("/intelligence/briefing", signal);
+
+// Organizational Graph (Milestone D) — discoveries from measured
+// relationships: evidence, confidence, departments, impact, one action.
+export interface ApiDiscovery {
+  kind: "duplicated_work" | "systemic_obstacle" | "learning_transfer" | "redundant_approvals";
+  severity: "high" | "medium" | "info";
+  headline: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+  confidence: number;
+  affected_departments: string[];
+  business_impact: string;
+  recommended_action: string;
+}
+export interface ApiDiscoveries {
+  period_days: number;
+  coverage: { sufficient: boolean; note: string };
+  discoveries: ApiDiscovery[];
+}
+export const getDiscoveries = (signal?: AbortSignal) =>
+  getJsonAuth<ApiDiscoveries>("/intelligence/discoveries", signal);
