@@ -159,6 +159,9 @@ class WorkflowRenderRequest(BaseModel):
 class ApprovalDecisionRequest(BaseModel):
     decision: str  # approved | denied
     reason: str = ""
+    # Optional teaching: a lesson the workforce should remember from this
+    # decision. Feeds Business Memory as an authoritative correction.
+    lesson: str = ""
 
 # Dashboard
 class DashboardResponse(BaseModel):

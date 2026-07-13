@@ -17,22 +17,35 @@ import { lifecycleOf } from "@/lib/lifecycle";
 import {
   AnalyticsSummary,
   ApiFleetAutonomy,
+  ApiMemoryInsight,
+  ApiMemoryLesson,
   getAnalyticsSummary,
   getFleetAutonomy,
+  getMemory,
+  teachMemory,
 } from "@/lib/api";
 
 export default function KnowledgePage() {
   const router = useRouter();
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [autonomy, setAutonomy] = useState<ApiFleetAutonomy | null>(null);
+  const [lessons, setLessons] = useState<ApiMemoryLesson[]>([]);
+  const [insights, setInsights] = useState<ApiMemoryInsight[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadMemory = (signal?: AbortSignal) =>
+    getMemory(signal).then((m) => {
+      setLessons(m.lessons);
+      setInsights(m.insights);
+    }).catch(() => { /* memory optional until 006 is applied */ });
 
   useEffect(() => {
     const controller = new AbortController();
     Promise.allSettled([
       getAnalyticsSummary("30d", "all", controller.signal),
       getFleetAutonomy(controller.signal),
+      loadMemory(controller.signal),
     ]).then(([s, a]) => {
       if (s.status === "fulfilled") setSummary(s.value);
       else if (isAbortError(s.reason)) return;
@@ -66,13 +79,15 @@ export default function KnowledgePage() {
         </div>
       )}
 
+      <MemorySection lessons={lessons} insights={insights} onTaught={() => loadMemory()} />
+
       {noHistory ? (
-        <div className="pb-16">
+        <div className="pb-16 pt-10">
           <p className="text-[14px] leading-relaxed text-white/55 max-w-xl">
-            Nothing has been learned yet — knowledge here is earned from real work, not
-            written by hand. Every operation your workforce completes adds to its track
-            record: what succeeds, what fails and why, which applications behave oddly,
-            and where humans are still needed.
+            No operational history yet — track records here are earned from real work,
+            not written by hand. Every operation your workforce completes adds to what
+            it knows: what succeeds, what fails and why, which applications behave
+            oddly, and where humans are still needed.
           </p>
           <Link href="/dashboard/workforce"
                 className="mt-5 inline-flex items-center gap-1.5 text-[13px] text-accent hover:underline">
@@ -80,7 +95,7 @@ export default function KnowledgePage() {
           </Link>
         </div>
       ) : (
-        <div className="space-y-10 pb-16">
+        <div className="space-y-10 pb-16 pt-10">
           {/* What each responsibility has learned */}
           {graded.length > 0 && (
             <section>
@@ -206,6 +221,99 @@ export default function KnowledgePage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** The organization's memory: what it was taught and what it learned.
+ * Every lesson here flows into the planning of every future operation —
+ * this is the record that makes the workforce harder to replace. */
+function MemorySection({ lessons, insights, onTaught }: {
+  lessons: ApiMemoryLesson[]; insights: ApiMemoryInsight[]; onTaught: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [teachError, setTeachError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const lesson = draft.trim();
+    if (!lesson || busy) return;
+    setBusy(true);
+    setTeachError(null);
+    try {
+      await teachMemory(lesson);
+      setDraft("");
+      onTaught();
+    } catch (e) {
+      setTeachError(e instanceof Error ? e.message : "Could not save the lesson");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section>
+      <SectionLabel>Business memory</SectionLabel>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-white/40 max-w-xl">
+        What this organization has taught its workforce, and what the workforce has
+        learned from experience. Every lesson is recalled into the planning of every
+        future operation.
+      </p>
+
+      {lessons.length > 0 && (
+        <div className="mt-4 space-y-2.5">
+          {lessons.slice(0, 8).map((l) => (
+            <div key={l.id} className="flex gap-3">
+              <span className={cn("mt-[7px] h-1.5 w-1.5 rounded-full shrink-0",
+                l.source === "taught" ? "bg-accent" : "bg-sky-300/80")} />
+              <div className="min-w-0">
+                <p className="text-[13.5px] leading-snug text-white/80">{l.lesson}</p>
+                <p className="mt-0.5 font-mono text-[9.5px] uppercase tracking-[0.12em] text-white/30">
+                  {l.source} {l.kind}
+                  {l.times_reinforced > 1 && <> · reinforced ×{l.times_reinforced}</>}
+                  {l.scope !== "org" && <> · {l.scope}</>}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {insights.length > 0 && (
+        <div className="mt-5 space-y-2.5">
+          {insights.slice(0, 3).map((ins, i) => (
+            <div key={i} className="flex gap-3">
+              <span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-amber-300 shrink-0" />
+              <p className="text-[13px] leading-relaxed text-white/65">{ins.recommendation}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Teach: managers correct, they never edit prompts. */}
+      <div className="mt-5 max-w-xl">
+        <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.02] px-3.5 h-11 focus-within:border-accent/30 transition-colors">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+            placeholder="Teach the workforce something — e.g. “Invoices from ACME belong to vendor 400312”"
+            className="flex-1 bg-transparent text-[13px] text-white placeholder:text-white/25 focus:outline-none"
+            data-testid="teach-input"
+          />
+          <button onClick={() => void submit()} disabled={busy || !draft.trim()}
+                  className="rounded-md bg-accent/15 px-3 h-7 text-[12px] font-medium text-accent hover:bg-accent/25 transition-colors disabled:opacity-40">
+            Teach
+          </button>
+        </div>
+        {teachError && <p className="mt-1.5 text-[11.5px] text-red-300">{teachError}</p>}
+        {lessons.length === 0 && insights.length === 0 && (
+          <p className="mt-2 text-[11.5px] text-white/30">
+            Nothing in memory yet. Lessons arrive from your corrections, approval
+            decisions, and what the workforce learns recovering from real obstacles.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 

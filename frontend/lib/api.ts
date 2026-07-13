@@ -932,3 +932,33 @@ export const setWorkspaceLearning = (
   orgId: string, workspaceId: string, body: { tiers: Record<string, boolean>; anonymization?: string },
 ) => sendJsonAuth<{ policy: LearningPolicy; changes: unknown[] }>(
   "PUT", `/orgs/${orgId}/workspaces/${workspaceId}/learning`, body);
+
+// Business Memory (Milestone C2) — organizational intelligence that compounds.
+export interface ApiMemoryLesson {
+  id: string;
+  kind: "correction" | "recovery" | "quirk" | "policy" | "preference" | "optimization";
+  scope: string;
+  subject: string;
+  lesson: string;
+  source: "taught" | "observed";
+  taught_by?: string | null;
+  evidence: Array<Record<string, string>>;
+  confidence: number;
+  times_reinforced: number;
+  last_reinforced_at: string;
+  created_at: string;
+}
+export interface ApiMemoryInsight {
+  kind: string;
+  capability: string;
+  workspace_id: string | null;
+  consecutive_approvals: number;
+  recommendation: string;
+}
+export const getMemory = (signal?: AbortSignal) =>
+  getJsonAuth<{ lessons: ApiMemoryLesson[]; insights: ApiMemoryInsight[] }>("/memory", signal);
+export const teachMemory = (lesson: string, subject = "general",
+                            kind = "correction", scope = "org") =>
+  sendJsonAuth<ApiMemoryLesson>("POST", "/memory/teach", { lesson, subject, kind, scope });
+export const forgetMemory = (id: string) =>
+  sendJsonAuth<{ archived: string }>("DELETE", `/memory/${encodeURIComponent(id)}`);

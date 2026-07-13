@@ -11,6 +11,7 @@ from database import get_service_db
 from events_store import EventBuffer
 from models import ExecuteRequest
 from routes.analytics_routes import router as analytics_router
+from routes.memory_routes import router as memory_router
 from routes.approval_routes import router as approval_router
 from routes.attention_routes import router as attention_router
 from routes.control_routes import router as control_router
@@ -58,6 +59,7 @@ app.include_router(workflow_router, prefix="/api/v1")
 app.include_router(approval_router, prefix="/api/v1")
 app.include_router(platform_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
+app.include_router(memory_router, prefix="/api/v1")
 app.include_router(control_router, prefix="/api/v1")
 app.include_router(runner_router, prefix="/api/v1")
 app.include_router(attention_router, prefix="/api/v1")
@@ -136,6 +138,10 @@ async def execute_stream(
     # data on the workspace). Enforced at the engine's single LLM checkpoint.
     from runners import workspace_egress_policy
     egress = workspace_egress_policy(db, scope.get("workspace_id"))
+    # Business Memory: the org's compounding lessons flow into this run's
+    # planning through the engine's existing recall seam.
+    from org_memory import build_org_memory
+    org_memory = build_org_memory(db, scope.get("org_id"))
 
     async def generate():
         yield sse({"type": "session_id", "session_id": session_id})
@@ -148,7 +154,7 @@ async def execute_stream(
         stream = execute_task_stream(
             body.instruction, control=control,
             approval_risk_threshold=approval_threshold, secrets=secrets,
-            egress=egress,
+            egress=egress, memory=org_memory,
         )
         async for event in athread_iter(stream):
             if event is None:
@@ -190,6 +196,18 @@ async def execute_stream(
         for event in final["events"]:
             buffer.collect(event)
         buffer.flush(db, "session", session_id)
+
+        # Business Memory ingestion: measured facts from this run (successful
+        # recoveries) become organizational lessons. Best-effort — learning
+        # never affects the run's result.
+        if scope.get("org_id"):
+            try:
+                import memory_service
+                memory_service.learn_from_events(
+                    db, scope["org_id"], scope.get("workspace_id"),
+                    session_id, body.instruction, final["events"])
+            except Exception:
+                pass
 
         increment_usage(user_id, session_id)
         registry().close(session_id)

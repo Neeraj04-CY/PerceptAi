@@ -61,4 +61,22 @@ async def decide(approval_id: str, body: ApprovalDecisionRequest,
                  {"objective": approval.get("objective", ""),
                   "mission_id": approval.get("mission_id")},
                  workspace_id=approval.get("workspace_id"))
+
+    # Human teaching: an explicit lesson — or a denial with a reason — becomes
+    # organizational memory the next run recalls. Best-effort, never blocks
+    # the decision.
+    taught = (body.lesson or "").strip()
+    if not taught and body.decision == "denied" and (body.reason or "").strip():
+        taught = f"'{approval['capability']}' was denied: {body.reason.strip()}"
+    if taught:
+        try:
+            import memory_service
+            memory_service.teach(
+                db, approval["org_id"], current_user["sub"],
+                subject=approval["capability"], lesson=taught,
+                kind="correction",
+                workspace_id=approval.get("workspace_id"),
+                evidence_ref={"approval_id": approval_id})
+        except Exception:
+            pass
     return {"id": approval_id, "status": body.decision}
