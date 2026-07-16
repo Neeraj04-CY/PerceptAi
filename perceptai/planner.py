@@ -27,6 +27,16 @@ def _is_orientation_read(step: Step) -> bool:
     text = f"{find} {desc}"
     return any(p in text for p in _ORIENTATION_PHRASES)
 
+
+# Lower rank = more actionable; used only when a plan is entirely filler and
+# one step must be kept so the run never finishes on an empty queue.
+_FILLER_RANK = {
+    ActionType.CLICK: 0, ActionType.TYPE: 0, ActionType.CLEAR_TYPE: 0,
+    ActionType.PRESS: 0, ActionType.NAVIGATE_URL: 0, ActionType.OPEN_APP: 0,
+    ActionType.SCROLL: 1, ActionType.READ_SCREEN: 2,
+    ActionType.WAIT: 3, ActionType.FOCUS_WINDOW: 4,
+}
+
 _ACTIONS = "open_app|navigate_url|focus_window|click|type|clear_type|press|wait|scroll|read_screen"
 
 
@@ -202,4 +212,13 @@ Return ONLY the JSON array. No markdown. No explanation."""
                 removed += 1
                 continue
             keep.append(s)
+        # Safety: stripping must never turn a non-empty plan into nothing.
+        # An empty queue reads as "goal achieved" downstream, so emptying an
+        # all-filler plan would finish the run prematurely — a silent wrong
+        # outcome (regression: a post-launch replan of pure orientation steps
+        # ended a data-entry task before it typed). Keep the single most
+        # actionable original step instead.
+        if steps and not keep:
+            best = min(steps, key=lambda s: _FILLER_RANK.get(s.action, 0))
+            return [best], len(steps) - 1
         return keep, removed

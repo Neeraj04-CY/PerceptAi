@@ -188,7 +188,7 @@ class Verifier:
             # (the world changing over the whole run must not credit a
             # click for what an app did on its own).
             checks.extend(self._world_change_checks(steps, world_before, world_after))
-        checks.extend(self._judge_completion_criteria(context, steps))
+        checks.extend(self._judge_completion_criteria(context, steps, world_after))
 
         if not checks:
             return VerificationResult(
@@ -337,9 +337,16 @@ class Verifier:
         ]
 
     def _judge_completion_criteria(
-        self, context: TaskContext, steps: list[StepResult]
+        self, context: TaskContext, steps: list[StepResult],
+        world_after: Optional[WorldState] = None,
     ) -> list[VerificationCheck]:
-        """LLM-judge the goal's completion criteria against collected evidence.
+        """LLM-judge the goal's completion criteria against ALL measured
+        evidence: collected findings, the actions executed, the observable
+        end-state (window titles), and what each action caused (per-step
+        effects). A production false-negative motivated this: a data-entry
+        task typed text that appeared in the window title, but the judge —
+        seeing only read_screen findings — declared 'no evidence it was
+        typed'. The screen IS the evidence.
 
         Critical only for information goals (report/data): unjudgeable action
         criteria must not regress action-task statuses. Judge failure degrades
@@ -352,30 +359,48 @@ class Verifier:
         evidence_block = "\n".join(
             f"- [{e.kind}] {e.label}: {e.value} (source: {e.source or 'screen'})"
             for e in context.evidence[:30]
-        ) or "No evidence collected."
+        ) or "No information was collected via read_screen."
         actions_block = "\n".join(
-            f"- {r.step.description} [{r.step.action.value}]: {r.status.value}" for r in steps[-15:]
+            f"- {r.step.description} [{r.step.action.value}]: {r.status.value}"
+            + (f" — typed \"{r.step.params.get('text')}\""
+               if r.step.action in (ActionType.TYPE, ActionType.CLEAR_TYPE)
+               and r.step.params.get("text") else "")
+            + (f" — screen responded: {r.data['effect'].get('summary')}"
+               if isinstance(r.data.get("effect"), dict) and r.data["effect"].get("changed")
+               and r.data["effect"].get("summary") else "")
+            for r in steps[-15:]
         ) or "No actions executed."
+        # The observable end-state: window titles often literally contain the
+        # result (e.g. an edited document's title bar shows its text/filename).
+        screen_block = "No window state captured."
+        if world_after is not None and getattr(world_after, "windows", None):
+            titles = [w.title for w in world_after.windows[:8] if w.title]
+            if titles:
+                screen_block = "\n".join(f"- {t}" for t in titles)
         criteria_block = "\n".join(f"{i+1}. {c}" for i, c in enumerate(goal.completion_criteria))
 
-        prompt = f"""You are a strict task auditor. Judge whether each completion criterion is satisfied.
+        prompt = f"""You are a strict but fair task auditor. Judge whether each completion criterion is satisfied, using ALL the observable evidence below — not just collected findings.
 
 Goal: {goal.intent}
 
 Completion criteria:
 {criteria_block}
 
-Evidence collected:
+Information collected:
 {evidence_block}
 
-Actions executed:
+Actions executed (with what was typed and how the screen responded):
 {actions_block}
+
+Observable window state at the end (titles often contain the result):
+{screen_block}
 
 Return ONLY valid JSON:
 [{{"criterion": 1, "met": true, "reason": "one sentence"}}]
 
 Rules:
-- Judge ONLY from the evidence and actions above. When in doubt, met=false.
+- Treat the window state and the screen's response to each action as REAL evidence: if an action typed text and that text appears in a window title, the text was typed.
+- Judge from the observable evidence above. When genuinely unsupported, met=false.
 Return ONLY the JSON array."""
 
         try:

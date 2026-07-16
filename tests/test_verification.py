@@ -297,3 +297,31 @@ def test_failed_criterion_outweighs_grounding_alone():
     result = verifier.verify(ctx, steps)
     assert not result.verified          # honest: Review, not Completed
     assert result.confidence < 0.5
+
+
+def test_judge_sees_window_titles_and_typed_text():
+    """Production false-negative fix: a data-entry task whose typed text
+    appears in the window title must be judgeable as done — the judge sees
+    the window state and what was typed, not only read_screen findings."""
+    from perceptai.contracts import WindowInfo, WorldState
+
+    captured = {}
+    class _CapturingLLM:
+        def complete_json(self, prompt, model, max_tokens=500):
+            captured["prompt"] = prompt
+            return [{"criterion": 1, "met": True, "reason": "text is in the window title"}], "ok"
+
+    verifier = Verifier(FakeWindows(["Vendor ACME - Notepad"]), _CapturingLLM(),
+                        EngineConfig(groq_api_key="x"))
+    ctx = TaskContext("type invoice details")
+    ctx.goal = GoalSpec(intent="type the invoice line",
+                        output_format="action_confirmation",
+                        completion_criteria=["The text 'Vendor ACME' was typed"])
+    steps = [_ok("type", text="Vendor ACME", app="Notepad",
+                 data={"effect": {"changed": True, "summary": "window title changed"}})]
+    after = WorldState(windows=[WindowInfo(title="*Vendor ACME - Notepad")])
+    result = verifier.verify(ctx, steps, world_after=after)
+    # The judge received the window title and the typed text.
+    assert "Vendor ACME - Notepad" in captured["prompt"]
+    assert 'typed "Vendor ACME"' in captured["prompt"]
+    assert result.verified  # criterion met on observable evidence

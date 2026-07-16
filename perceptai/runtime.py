@@ -186,14 +186,34 @@ class ExecutionEngine:
             started_at=start,
         )
 
-        try:
-            output = self._sound_plan(task, context, executed, state, rstate, source="planner")
+        # Initial planning, retried once on a transient failure. A single
+        # empty/malformed LLM reply (rate limit, a bad JSON frame) must not
+        # kill the whole mission before it starts — measured: a real run
+        # died at 7s on "Could not plan task" from one hiccuped plan call.
+        # A genuine "the goal is already done" ([]) is NOT a failure and is
+        # not retried.
+        initial: list = []
+        planner_said_done = False
+        attempts = max(1, self._config.initial_plan_attempts)
+        for attempt in range(attempts):
+            last = attempt == attempts - 1
+            try:
+                output = self._sound_plan(task, context, executed, state, rstate,
+                                          source="planner")
+            except Exception as e:
+                if not last:
+                    time.sleep(self._config.find_retry_wait_s)
+                    continue
+                return self._finish(task, context, state, executed, rstate,
+                                    errors=[f"Planning failed: {e}"], started=start)
             initial = output.steps if output.ok else []
-            reasoning.record_plan(rstate, initial,
-                                  planner_said_done=output.ok and not output.steps)
-        except Exception as e:
-            return self._finish(task, context, state, executed, rstate,
-                                errors=[f"Planning failed: {e}"], started=start)
+            planner_said_done = output.ok and not output.steps
+            if initial or planner_said_done:
+                break
+            if not last:
+                time.sleep(self._config.find_retry_wait_s)  # let a transient glitch pass
+        reasoning.record_plan(rstate, initial, planner_said_done=planner_said_done,
+                              executed_count=len(executed))
 
         if not initial and not rstate.goal_achieved_signal:
             return self._finish(task, context, state, executed, rstate,

@@ -226,3 +226,34 @@ def test_recovery_never_spirals_when_budget_exhausts():
     assert result.status.value == "failed"
     assert decisions.get("recover", 0) <= 4, decisions
     assert reasoning.get("cycles", 0) <= 12
+
+
+def test_premature_goal_achieved_is_rejected():
+    """A planner declaring the goal done before ANY action ran, while
+    completion criteria are unmet, is a hallucination — the run must not
+    finish having done nothing (measured: a data-entry task ended in 5s,
+    zero steps, because the first plan returned [])."""
+    from perceptai.reasoning import ReasoningEngine, ReasoningState
+    from perceptai.contracts import GoalSpec
+
+    engine = ReasoningEngine.__new__(ReasoningEngine)  # only record_plan needed
+    state = ReasoningState.__new__(ReasoningState)
+    state.post_launch_replan_pending = True
+    state.planner_exhausted = False
+    state.goal_achieved_signal = False
+    state.goal = GoalSpec(intent="type into notepad",
+                          completion_criteria=["the text was typed"])
+    ReasoningEngine.record_plan(engine, state, steps=[], planner_said_done=True,
+                                executed_count=0)
+    assert not state.goal_achieved_signal   # rejected
+    assert state.planner_exhausted          # honest "could not plan" path
+
+    # But a genuine mid-run "done" (after acting) is respected.
+    state2 = ReasoningState.__new__(ReasoningState)
+    state2.post_launch_replan_pending = True
+    state2.planner_exhausted = False
+    state2.goal_achieved_signal = False
+    state2.goal = GoalSpec(intent="x", completion_criteria=["done"])
+    ReasoningEngine.record_plan(engine, state2, steps=[], planner_said_done=True,
+                                executed_count=3)
+    assert state2.goal_achieved_signal

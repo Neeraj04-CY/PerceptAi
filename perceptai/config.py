@@ -42,6 +42,12 @@ class EngineConfig:
     max_healing_attempts: int = 2
     max_replans: int = 4
     find_retries: int = 3
+    # The initial plan gates the whole mission — a single empty/malformed
+    # reply from the planning model kills the run before it starts. Retry
+    # it a few times against transient variance (each attempt is one cheap
+    # LLM call). The frontier model rarely needs this; the Groq fallback
+    # benefits materially.
+    initial_plan_attempts: int = 3
     healing_confidence_threshold: float = 0.5
 
     # The Plan Critic (Chapter XVI) — verification BEFORE action.

@@ -1,0 +1,76 @@
+{
+  "name": "reliability",
+  "description": "Mission Success Rate benchmark. Real desktop workflows a paying user would actually run, scored on VERIFIED business outcome against OS state — never step counts. The single KPI: how many finish, verified, unattended. WARNING: `run` takes over the real mouse/keyboard; run deliberately. Tasks are grouped by category; each failure becomes a tracked engineering task in docs/reliability-ledger.md.",
+  "tasks": [
+    {
+      "id": "data_entry_notepad",
+      "category": "data-entry",
+      "instruction": "Open Notepad and type: Vendor ACME Corp, Invoice INV-4471, Amount 12,400.00",
+      "checks": [
+        { "type": "window_exists", "keyword": "notepad" },
+        { "type": "screen_contains", "text": "INV-4471" },
+        { "type": "screen_contains", "text": "12,400.00" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    },
+    {
+      "id": "data_entry_special_chars",
+      "category": "data-entry",
+      "instruction": "Open Notepad and type: Price: $49.99 (20% off!) contact billing@acme.com",
+      "checks": [
+        { "type": "window_exists", "keyword": "notepad" },
+        { "type": "screen_contains", "text": "$49.99" },
+        { "type": "screen_contains", "text": "billing@acme.com" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    },
+    {
+      "id": "launch_calculator",
+      "category": "app-launch",
+      "instruction": "Open the Calculator app",
+      "checks": [{ "type": "window_exists", "keyword": "calculator" }],
+      "cleanup": ["taskkill /IM CalculatorApp.exe /F", "taskkill /IM Calculator.exe /F"]
+    },
+    {
+      "id": "launch_settings",
+      "category": "app-launch",
+      "instruction": "Open Windows Settings",
+      "checks": [{ "type": "window_exists", "keyword": "Settings" }],
+      "cleanup": ["taskkill /IM SystemSettings.exe /F"]
+    },
+    {
+      "id": "browser_search",
+      "category": "browser",
+      "instruction": "Open a web browser, go to bing.com, and search for 'enterprise automation platforms'",
+      "checks": [{ "type": "screen_contains", "text": "enterprise automation" }],
+      "cleanup": []
+    },
+    {
+      "id": "browser_navigate_read",
+      "category": "browser",
+      "instruction": "Open a web browser, navigate to example.com, and report the page heading",
+      "checks": [
+        { "type": "finding_contains", "text": "example" }
+      ],
+      "cleanup": []
+    },
+    {
+      "id": "extract_to_report",
+      "category": "extraction",
+      "instruction": "Open Notepad, type 'Q3 revenue was 2.4M, up 18 percent', then read it back and report the revenue figure",
+      "checks": [
+        { "type": "finding_contains", "text": "2.4M" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    },
+    {
+      "id": "collect_to_csv",
+      "category": "deliverable",
+      "instruction": "Open Notepad, type three lines 'Song A - Artist 1', 'Song B - Artist 2', 'Song C - Artist 3', then collect them into a CSV with columns name and artist",
+      "checks": [
+        { "type": "report_field", "field": "confidence" }
+      ],
+      "cleanup": ["taskkill /IM notepad.exe /F"]
+    }
+  ]
+}

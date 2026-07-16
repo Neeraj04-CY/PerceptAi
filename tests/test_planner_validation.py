@@ -134,3 +134,23 @@ def test_planner_keeps_a_lone_focus_step():
     planner = Planner(EngineConfig(groq_api_key="x"), _LoneFocus())
     out = planner.plan("focus notepad", "world", [])
     assert [s.action.value for s in out.steps] == ["focus_window"]
+
+
+def test_all_filler_plan_never_empties_to_premature_finish():
+    """Regression: a post-launch replan of pure orientation steps must not
+    strip to an empty queue (which reads as 'goal achieved' and finishes
+    the run before it acts). Keep the single most-actionable step."""
+    from perceptai.config import EngineConfig
+    from perceptai.planner import Planner
+
+    class _AllFiller:
+        calls = 0
+        def complete_json(self, prompt, model, max_tokens=1000):
+            from perceptai.llm import parse_json_reply
+            reply = ('[{"action":"focus_window","window":"Notepad","description":"Focus"},'
+                     '{"action":"read_screen","find":"determine the next step","description":"orient"}]')
+            return parse_json_reply(reply), reply
+
+    planner = Planner(EngineConfig(groq_api_key="x"), _AllFiller())
+    out = planner.plan("type into notepad", "world", [])
+    assert len(out.steps) >= 1, "an all-filler plan must not empty the queue"

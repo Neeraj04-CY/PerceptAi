@@ -236,8 +236,19 @@ class ReasoningEngine:
     # ------------------------------------------------------------ planning
 
     def record_plan(self, state: ReasoningState, steps: list[Step],
-                    planner_said_done: bool) -> None:
+                    planner_said_done: bool, executed_count: int = 1) -> None:
         state.post_launch_replan_pending = False
+        # A planner declaring the goal "already done" before ANY action has
+        # run, while the goal still has unmet completion criteria, is a
+        # hallucination — an action goal cannot be complete before it acts.
+        # Reject the false signal so the run does not finish having done
+        # nothing (measured: a data-entry task ended in 5s, zero steps,
+        # because the first plan returned []).
+        if (planner_said_done and executed_count == 0
+                and state.goal is not None
+                and getattr(state.goal, "completion_criteria", None)):
+            planner_said_done = False
+            steps = []  # force the exhausted path -> honest "could not plan"
         # A planner that produced nothing (and did not declare the goal
         # done) cannot be asked again for the same world — the decision
         # engine finishes instead of burning the replan budget.
