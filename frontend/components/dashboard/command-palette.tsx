@@ -38,7 +38,7 @@ interface Command {
 }
 
 const nav: Array<{ label: string; href: string; icon: Command["icon"]; hint: string }> = [
-  { label: "Today", href: "/dashboard", icon: Sunrise, hint: "The morning brief" },
+  { label: "Home", href: "/dashboard", icon: Sunrise, hint: "Give your workforce a job" },
   { label: "Workforce", href: "/dashboard/workforce", icon: Users, hint: "Your AI employees" },
   { label: "Assign work", href: "/dashboard/run", icon: PlayCircle, hint: "Brief your workforce and watch it work" },
   { label: "Operations", href: "/dashboard/operations", icon: History, hint: "The work record" },

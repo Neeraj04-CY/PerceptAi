@@ -142,6 +142,11 @@ async def execute_stream(
     # data on the workspace). Enforced at the engine's single LLM checkpoint.
     from runners import workspace_egress_policy
     egress = workspace_egress_policy(db, scope.get("workspace_id"))
+    # Run controls: model + execution mode as engine config overrides;
+    # private mode RAISES egress to local_only (never lowers policy).
+    import run_modes
+    run_overrides = run_modes.overrides_for(body.model, body.exec_mode)
+    egress = run_modes.egress_for(egress, body.exec_mode)
     # Business Memory: the org's compounding lessons flow into this run's
     # planning through the engine's existing recall seam.
     from org_memory import build_org_memory
@@ -158,7 +163,7 @@ async def execute_stream(
         stream = execute_task_stream(
             body.instruction, control=control,
             approval_risk_threshold=approval_threshold, secrets=secrets,
-            egress=egress, memory=org_memory,
+            egress=egress, memory=org_memory, overrides=run_overrides,
         )
         async for event in athread_iter(stream):
             if event is None:

@@ -11,7 +11,7 @@ import { openCommandPalette } from "./command-palette";
  * and a real ⌘K command palette trigger. No fake controls. */
 
 const SECTIONS: Record<string, string> = {
-  "/dashboard": "Today",
+  "/dashboard": "Home",
   "/dashboard/workforce": "Workforce",
   "/dashboard/evidence": "Evidence",
   "/dashboard/run": "Assign work",

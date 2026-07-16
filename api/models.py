@@ -38,6 +38,10 @@ class ExecuteRequest(BaseModel):
     context: Optional[str] = None
     workspace_id: Optional[str] = None
     workflow_id: Optional[str] = None
+    # Run controls (run_modes.py): mapped to engine config overrides.
+    # Unknown values fall back to auto/balanced — never break a run.
+    model: Optional[str] = None       # auto | claude | groq
+    exec_mode: Optional[str] = None   # fast | balanced | max_reliability | private
 
 class ExecutionStep(BaseModel):
     step_number: int

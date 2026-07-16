@@ -11,34 +11,93 @@ import {
   BookOpen,
   Fingerprint,
   ShieldCheck,
-  Building2,
   Settings2,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  getApprovals,
+  getDashboardStats,
+  getMemory,
+  getWorkflows,
+} from "@/lib/api";
 
-// The business hierarchy (Milestone C): everything in primary navigation
-// helps run a business — nothing else. Hiring (templates) lives under
-// Workforce; analytics detail behind Knowledge. `matches` claims legacy
-// route families so detail pages highlight their section.
+// Progressive disclosure: a section earns its place in navigation only
+// once it holds real data — a brand-new account sees Home and Settings
+// and nothing else. Presence is cached so returning users never watch
+// the nav pop in.
+interface NavPresence {
+  operations: boolean;
+  workforce: boolean;
+  knowledge: boolean;
+  approvals: boolean;
+}
+const PRESENCE_KEY = "perceptai_nav_presence";
+const NO_PRESENCE: NavPresence = {
+  operations: false, workforce: false, knowledge: false, approvals: false,
+};
+
+function useNavPresence(): NavPresence {
+  const [presence, setPresence] = useState<NavPresence>(() => {
+    try {
+      const raw = window.localStorage.getItem(PRESENCE_KEY);
+      if (raw) return { ...NO_PRESENCE, ...(JSON.parse(raw) as NavPresence) };
+    } catch { /* first visit */ }
+    return NO_PRESENCE;
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.allSettled([
+      getDashboardStats(controller.signal),
+      getWorkflows(controller.signal),
+      getApprovals("all", controller.signal),
+      getMemory(controller.signal),
+    ]).then(([stats, workflows, approvals, memory]) => {
+      const sessions = stats.status === "fulfilled" ? stats.value.total_sessions : 0;
+      const wfs = workflows.status === "fulfilled" ? workflows.value.length : 0;
+      const aps = approvals.status === "fulfilled" ? approvals.value.length : 0;
+      const lessons = memory.status === "fulfilled" ? memory.value.lessons.length : 0;
+      const next: NavPresence = {
+        operations: sessions > 0,
+        workforce: wfs > 0 || sessions > 0,
+        knowledge: lessons > 0 || sessions > 0,
+        approvals: aps > 0,
+      };
+      setPresence((prev) => {
+        // Sections never disappear once earned — nav must feel stable.
+        const merged = {
+          operations: prev.operations || next.operations,
+          workforce: prev.workforce || next.workforce,
+          knowledge: prev.knowledge || next.knowledge,
+          approvals: prev.approvals || next.approvals,
+        };
+        try { window.localStorage.setItem(PRESENCE_KEY, JSON.stringify(merged)); } catch { /* ok */ }
+        return merged;
+      });
+    });
+    return () => controller.abort();
+  }, []);
+
+  return presence;
+}
+
 const nav = [
-  { label: "Today", href: "/dashboard", icon: Sunrise, testid: "nav-home", enabled: true,
-    matches: [] as string[] },
+  { label: "Home", href: "/dashboard", icon: Sunrise, testid: "nav-home", enabled: true,
+    matches: ["/dashboard/run"], gate: null as keyof NavPresence | null },
   { label: "Workforce", href: "/dashboard/workforce", icon: Users, testid: "nav-workforce", enabled: true,
-    matches: ["/dashboard/templates", "/dashboard/studio"] },
+    matches: ["/dashboard/templates", "/dashboard/studio"], gate: "workforce" as const },
   { label: "Operations", href: "/dashboard/operations", icon: History, testid: "nav-operations", enabled: true,
-    matches: ["/dashboard/sessions", "/dashboard/missions", "/dashboard/run"] },
+    matches: ["/dashboard/sessions", "/dashboard/missions"], gate: "operations" as const },
   { label: "Knowledge", href: "/dashboard/knowledge", icon: BookOpen, testid: "nav-knowledge", enabled: true,
-    matches: ["/dashboard/answers", "/dashboard/analytics"] },
+    matches: ["/dashboard/answers", "/dashboard/analytics"], gate: "knowledge" as const },
   { label: "Evidence", href: "/dashboard/evidence", icon: Fingerprint, testid: "nav-evidence", enabled: true,
-    matches: [] as string[] },
+    matches: [] as string[], gate: "operations" as const },
   { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck, testid: "nav-approvals", enabled: true,
-    matches: [] as string[] },
-  { label: "Organization", href: "/dashboard/org", icon: Building2, testid: "nav-org", enabled: true,
-    matches: [] as string[] },
+    matches: [] as string[], gate: "approvals" as const },
   { label: "Settings", href: "/dashboard/settings", icon: Settings2, testid: "nav-settings", enabled: true,
-    matches: ["/dashboard/keys", "/dashboard/runners"] },
+    matches: ["/dashboard/keys", "/dashboard/runners", "/dashboard/org"], gate: null },
 ];
 
 function isActive(pathname: string, href: string, matches: string[] = []): boolean {
@@ -50,6 +109,8 @@ function isActive(pathname: string, href: string, matches: string[] = []): boole
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const presence = useNavPresence();
+  const visible = nav.filter((item) => item.gate === null || presence[item.gate]);
   const [user, setUser] = useState<{ email?: string; sub?: string }>({});
 
   useEffect(() => {
@@ -115,7 +176,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-1">
-        {nav.map((item) => {
+        {visible.map((item) => {
           const active = item.enabled && isActive(pathname, item.href, item.matches);
           const Icon = item.icon;
           return (
@@ -193,13 +254,15 @@ export function Sidebar() {
 
 export function MobileBottomNav() {
   const pathname = usePathname();
+  const presence = useNavPresence();
+  const visible = nav.filter((item) => item.gate === null || presence[item.gate]);
   return (
     <div
       className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/[0.08] bg-[#0A0A0A]/95 backdrop-blur-xl"
       data-testid="mobile-bottom-nav"
     >
       <div className="flex items-center justify-around h-16 px-2">
-        {nav.filter((n) => n.enabled).slice(0, 5).map((item) => {
+        {visible.filter((n) => n.enabled).slice(0, 5).map((item) => {
           const Icon = item.icon;
           const active = isActive(pathname, item.href, item.matches);
           return (

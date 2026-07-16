@@ -148,7 +148,7 @@ def execute_task(instruction: str) -> Tuple[Optional[object], Optional[str]]:
 def execute_task_stream(instruction: str, *, control=None,
                         approval_risk_threshold: str = "",
                         secrets=None, egress=None,
-                        memory=None) -> Generator[dict, None, None]:
+                        memory=None, overrides=None) -> Generator[dict, None, None]:
     """Run one task, yielding dashboard-format SSE dicts as events happen.
 
     `control` is an optional perceptai ControlChannel (from the API's control
@@ -168,7 +168,8 @@ def execute_task_stream(instruction: str, *, control=None,
     session = _make_session(
         AgentSession, EngineConfig, control=control, secrets=secrets, egress=egress,
         memory=memory,
-        overrides={"approval_risk_threshold": approval_risk_threshold},
+        overrides={**(overrides or {}),
+                   "approval_risk_threshold": approval_risk_threshold},
     )
     for item in _relay(session.events, lambda: session.run(instruction),
                        to_legacy_sse):

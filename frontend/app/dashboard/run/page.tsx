@@ -58,16 +58,30 @@ export default function RunTaskPage() {
   const apiKeyRef = useRef<string>("");
   const sessionIdRef = useRef<string>("");
 
-  // Handoff from Studio: a rendered workflow lands here prefilled.
+  // Handoff from Home/Studio: a brief lands here prefilled — and with
+  // autostart it runs immediately (the one-interaction flow: type, choose
+  // intelligence, Run — this page is just where you watch it work).
+  const runControlsRef = useRef<{ model: string; exec_mode: string }>(
+    { model: "auto", exec_mode: "balanced" });
+  const [autostartBrief, setAutostartBrief] = useState<string | null>(null);
   useEffect(() => {
     const raw = window.localStorage.getItem("perceptai_pending_run");
     if (!raw) return;
     window.localStorage.removeItem("perceptai_pending_run");
     try {
-      const pending = JSON.parse(raw) as { instruction?: string; mode?: RunMode; target?: "local" | "runner" };
+      const pending = JSON.parse(raw) as {
+        instruction?: string; mode?: RunMode; target?: "local" | "runner";
+        model?: string; exec_mode?: string; autostart?: boolean;
+      };
       if (pending.instruction) setInitialTask(pending.instruction);
       if (pending.mode === "mission" || pending.mode === "task") setMode(pending.mode);
       if (pending.target === "runner" || pending.target === "local") setTarget(pending.target);
+      if (pending.model) runControlsRef.current.model = pending.model;
+      if (pending.exec_mode) runControlsRef.current.exec_mode = pending.exec_mode;
+      if (pending.autostart && pending.instruction &&
+          (pending.mode ?? "task") === "task" && (pending.target ?? "local") === "local") {
+        setAutostartBrief(pending.instruction);
+      }
     } catch {
       // ignore malformed handoff
     }
@@ -297,7 +311,9 @@ export default function RunTaskPage() {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      await streamPost("/execute/stream", { instruction: task }, apiKey, handleTaskEvent, controller.signal);
+      await streamPost("/execute/stream",
+        { instruction: task, ...runControlsRef.current },
+        apiKey, handleTaskEvent, controller.signal);
       setRunning(false);
     } catch (err) {
       setRunning(false);
@@ -307,6 +323,15 @@ export default function RunTaskPage() {
       setMeta((m) => ({ ...m, status: "failed" }));
     }
   }, [prepareRun, handleTaskEvent]);
+
+  // The one-interaction flow: Home hands off a brief with autostart; the
+  // run begins the moment this page mounts.
+  useEffect(() => {
+    if (autostartBrief && !running) {
+      setAutostartBrief(null);
+      void runTask(autostartBrief);
+    }
+  }, [autostartBrief, running, runTask]);
 
   // Route-to-runner: dispatch to the fleet, then drive the SAME cockpit off
   // the live relay. Control (pause/resume/stop/approval) still flows through
