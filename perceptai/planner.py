@@ -9,8 +9,23 @@ from __future__ import annotations
 from datetime import datetime
 
 from .config import EngineConfig
-from .contracts import GoalSpec, PlannerOutput, Step, StepResult, StrategyProfile
+from .contracts import ActionType, GoalSpec, PlannerOutput, Step, StepResult, StrategyProfile
 from .llm import LLMClient
+
+# Phrases that mark a read_screen as orientation ("read to figure out what to
+# do") rather than a request for specific data the user asked to collect.
+_ORIENTATION_PHRASES = (
+    "next step", "determine", "figure out", "identify", "current screen",
+    "what is on", "orient", "available", "see what", "check the screen",
+    "understand the", "assess",
+)
+
+
+def _is_orientation_read(step: Step) -> bool:
+    find = str(step.params.get("find", "")).lower()
+    desc = str(step.description or "").lower()
+    text = f"{find} {desc}"
+    return any(p in text for p in _ORIENTATION_PHRASES)
 
 _ACTIONS = "open_app|navigate_url|focus_window|click|type|clear_type|press|wait|scroll|read_screen"
 
@@ -97,8 +112,10 @@ Return an empty array [] ONLY if every objective and completion criterion is VIS
 
 Rules:
 - A criterion about an ongoing state (playing, running, submitted, saved, enabled) counts as achieved ONLY when the current screen shows that state (e.g. a Pause control, a confirmation message, a changed status). Having clicked toward it is NOT enough — if the final state is not visible, plan the remaining step(s) that produce it.
-- Open or focus the target application BEFORE interacting with it — but NEVER plan open_app for an application whose window is already listed in the world state above; focus_window it instead.
-- read_screen is ONLY for collecting information the user explicitly asked for. NEVER use it to orient or navigate — the CURRENT WORLD STATE above already tells you what is on screen. Each unnecessary read costs ~10 seconds of the user's time.
+- Plan the DIRECT path. The engine automatically focuses the target window before every click/type/press, so do NOT emit focus_window steps beside an action, and never emit "reload", "wait for it to settle", or "read the screen to determine the next step" — those waste ~10 seconds each and you already have the full world state above.
+- Open or focus the target application BEFORE interacting with it — but NEVER plan open_app for an application whose window is already listed in the world state above.
+- read_screen is ONLY for collecting information the user explicitly asked to receive (a list, a value, a table). NEVER use it to orient or navigate — the CURRENT WORLD STATE above already tells you what is on screen.
+- If the element you need is already visible in the world state, click it NOW — do not plan steps to reveal what is already there.
 - For "find" fields use the EXACT name of an element listed in the world state above. Never invent placeholder text.
 - Prefer elements with higher confidence; elements marked '?' are uncertain.
 - For dates/times use actual values: {now.strftime("%B %d, %Y")} / {now.strftime("%I:%M %p")}
@@ -151,7 +168,38 @@ Return ONLY the JSON array. No markdown. No explanation."""
                 continue
             steps.append(step)
 
+        steps, filler = self._strip_filler(steps)
+        dropped += filler
+
         if not steps:
             return PlannerOutput(ok=False, error="Planner produced no executable steps", raw=raw,
                                  dropped=dropped, model=self._plan_model())
         return PlannerOutput(steps=steps, raw=raw, dropped=dropped, model=self._plan_model())
+
+    @staticmethod
+    def _strip_filler(steps: list[Step]) -> tuple[list[Step], int]:
+        """Remove orientation thrash the runtime makes redundant. Measured on
+        a real Spotify run: 12 planned steps, only ~3 real actions — the rest
+        were focus_window (the runtime already ensures focus before every
+        click/type/press), and read_screen-to-orient (the planner already has
+        the fused world view). Stripping them turns a 60s flail into a direct
+        path. FOCUS_WINDOW as the SOLE step of a plan is kept — that is a
+        deliberate refocus, not filler beside an action that self-focuses."""
+        keep: list[Step] = []
+        removed = 0
+        has_real_action = any(
+            s.action not in (ActionType.FOCUS_WINDOW,) for s in steps)
+        for s in steps:
+            # A focus_window step is redundant when the plan also contains a
+            # real action (clicks/types self-focus in the runtime).
+            if s.action == ActionType.FOCUS_WINDOW and has_real_action:
+                removed += 1
+                continue
+            # read_screen whose 'find' is a navigation/orientation phrase, not
+            # a request for specific data, wastes ~10s and teaches the planner
+            # nothing it doesn't already see in the world view.
+            if s.action == ActionType.READ_SCREEN and _is_orientation_read(s):
+                removed += 1
+                continue
+            keep.append(s)
+        return keep, removed

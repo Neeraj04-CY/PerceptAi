@@ -92,3 +92,45 @@ def test_goal_context_reaches_prompt():
     assert "Done when: prices collected" in llm.prompt
     assert "$5" in llm.prompt  # known facts injected, marked do-not-re-collect
     assert "Return an empty array [] ONLY if" in llm.prompt  # completion-gated finish
+
+
+class _FillerLLM:
+    """Returns a plan full of the orientation thrash a real run produced."""
+    calls = 0
+    def complete_json(self, prompt, model, max_tokens=1000):
+        self.calls += 1
+        from perceptai.llm import parse_json_reply
+        reply = ('[{"action":"focus_window","window":"Spotify","description":"Focus the Spotify window"},'
+                 '{"action":"read_screen","find":"the current screen to determine the next step","description":"Read to determine next step"},'
+                 '{"action":"click","find":"Liked Songs","app":"Spotify","description":"Click Liked Songs"},'
+                 '{"action":"focus_window","window":"Spotify","description":"Focus again"}]')
+        return parse_json_reply(reply), reply
+
+
+def test_planner_strips_focus_and_orientation_filler():
+    from perceptai.config import EngineConfig
+    from perceptai.planner import Planner
+    planner = Planner(EngineConfig(groq_api_key="x"), _FillerLLM())
+    out = planner.plan("play liked songs", "world view", [])
+    actions = [s.action.value for s in out.steps]
+    # Only the real click survives; both focus_window and the orientation
+    # read are stripped.
+    assert actions == ["click"], actions
+    assert out.dropped >= 3
+
+
+def test_planner_keeps_a_lone_focus_step():
+    """A focus_window with no other action is a deliberate refocus, kept."""
+    from perceptai.config import EngineConfig
+    from perceptai.planner import Planner
+
+    class _LoneFocus:
+        calls = 0
+        def complete_json(self, prompt, model, max_tokens=1000):
+            from perceptai.llm import parse_json_reply
+            reply = '[{"action":"focus_window","window":"Notepad","description":"Focus Notepad"}]'
+            return parse_json_reply(reply), reply
+
+    planner = Planner(EngineConfig(groq_api_key="x"), _LoneFocus())
+    out = planner.plan("focus notepad", "world", [])
+    assert [s.action.value for s in out.steps] == ["focus_window"]
