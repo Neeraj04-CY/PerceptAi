@@ -14,6 +14,7 @@ from routes.analytics_routes import router as analytics_router
 from routes.memory_routes import router as memory_router
 from routes.intelligence_routes import router as intelligence_router
 from routes.record_routes import router as record_router
+from routes.models_routes import router as models_router
 from routes.approval_routes import router as approval_router
 from routes.attention_routes import router as attention_router
 from routes.control_routes import router as control_router
@@ -64,6 +65,7 @@ app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(memory_router, prefix="/api/v1")
 app.include_router(intelligence_router, prefix="/api/v1")
 app.include_router(record_router, prefix="/api/v1")
+app.include_router(models_router, prefix="/api/v1")
 app.include_router(control_router, prefix="/api/v1")
 app.include_router(runner_router, prefix="/api/v1")
 app.include_router(attention_router, prefix="/api/v1")

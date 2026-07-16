@@ -165,6 +165,124 @@ def _anthropic_text(response: Any) -> str:
         return ""
 
 
+class OpenAIProvider:
+    """GPT — frontier planner/grounder via the OpenAI SDK (also serves
+    Azure OpenAI when the SDK is pointed at an Azure deployment)."""
+    name = "openai"
+
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+        self._client = None
+
+    def available(self) -> bool:
+        if not self._api_key:
+            return False
+        try:
+            import importlib.util
+            return importlib.util.find_spec("openai") is not None
+        except Exception:
+            return False
+
+    def _c(self):
+        if self._client is None:
+            from openai import OpenAI  # lazy
+            self._client = OpenAI(api_key=self._api_key)
+        return self._client
+
+    def complete_text(self, prompt: str, model: str, max_tokens: int) -> str:
+        r = self._c().chat.completions.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}])
+        return (r.choices[0].message.content or "").strip()
+
+    def complete_vision(self, image_b64: str, prompt: str, model: str, max_tokens: int) -> str:
+        r = self._c().chat.completions.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                {"type": "text", "text": prompt}]}])
+        return (r.choices[0].message.content or "").strip()
+
+
+class GeminiProvider:
+    """Gemini — Google's frontier model, notable for a very large context
+    window (useful for long, cluttered enterprise screens)."""
+    name = "gemini"
+
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+        self._client = None
+
+    def available(self) -> bool:
+        if not self._api_key:
+            return False
+        try:
+            import importlib.util
+            return importlib.util.find_spec("google.generativeai") is not None
+        except Exception:
+            return False
+
+    def _c(self):
+        if self._client is None:
+            import google.generativeai as genai  # lazy
+            genai.configure(api_key=self._api_key)
+            self._client = genai
+        return self._client
+
+    def complete_text(self, prompt: str, model: str, max_tokens: int) -> str:
+        genai = self._c()
+        m = genai.GenerativeModel(model)
+        r = m.generate_content(
+            prompt, generation_config={"max_output_tokens": max_tokens})
+        return (getattr(r, "text", "") or "").strip()
+
+    def complete_vision(self, image_b64: str, prompt: str, model: str, max_tokens: int) -> str:
+        import base64
+        genai = self._c()
+        m = genai.GenerativeModel(model)
+        r = m.generate_content(
+            [{"mime_type": "image/png", "data": base64.b64decode(image_b64)}, prompt],
+            generation_config={"max_output_tokens": max_tokens})
+        return (getattr(r, "text", "") or "").strip()
+
+
+class OllamaProvider:
+    """Local models via an Ollama host — private, on-device, zero cost. The
+    only provider that keeps every prompt and screenshot on the machine,
+    which is what a security-sensitive enterprise needs."""
+    name = "ollama"
+
+    def __init__(self, host: str):
+        self._host = (host or "").rstrip("/")
+
+    def available(self) -> bool:
+        if not self._host:
+            return False
+        try:
+            import importlib.util
+            if importlib.util.find_spec("requests") is None:
+                return False
+            import requests  # lazy
+            requests.get(f"{self._host}/api/tags", timeout=1.5)
+            return True
+        except Exception:
+            return False
+
+    def complete_text(self, prompt: str, model: str, max_tokens: int) -> str:
+        import requests
+        r = requests.post(f"{self._host}/api/generate", timeout=120, json={
+            "model": model, "prompt": prompt, "stream": False,
+            "options": {"num_predict": max_tokens}})
+        return str(r.json().get("response", "")).strip()
+
+    def complete_vision(self, image_b64: str, prompt: str, model: str, max_tokens: int) -> str:
+        import requests
+        r = requests.post(f"{self._host}/api/generate", timeout=180, json={
+            "model": model, "prompt": prompt, "images": [image_b64], "stream": False,
+            "options": {"num_predict": max_tokens}})
+        return str(r.json().get("response", "")).strip()
+
+
 # ================================================================ router
 
 class LLMClient:
@@ -182,12 +300,23 @@ class LLMClient:
         self.calls = 0
 
         groq_key = api_key if api_key is not None else _cfg(config, "groq_api_key", "")
-        anthropic_key = _cfg(config, "anthropic_api_key", "")
         self._providers: dict[str, ModelProvider] = {
             "groq": GroqProvider(groq_key),
-            "anthropic": AnthropicProvider(anthropic_key),
+            "anthropic": AnthropicProvider(_cfg(config, "anthropic_api_key", "")),
+            "openai": OpenAIProvider(_cfg(config, "openai_api_key", "")),
+            "gemini": GeminiProvider(_cfg(config, "gemini_api_key", "")),
+            "ollama": OllamaProvider(_cfg(config, "ollama_host", "")),
         }
         self._routing = _build_routing(config, self._providers)
+
+    def available_providers(self) -> list[str]:
+        """Providers with a real, usable configuration right now — the honest
+        set the picker may offer. Never a fake dropdown."""
+        return [name for name, p in self._providers.items() if _safe_available(p)]
+
+    def active_provider(self) -> str:
+        """The provider auto/override actually routes reasoning to."""
+        return self._routing[REASON].provider
 
     # ------------------------------------------------------------ routing
     def spec_for(self, role: str) -> ModelSpec:
@@ -275,30 +404,56 @@ def _safe_available(provider: ModelProvider) -> bool:
         return False
 
 
+_TIER_TOKENS = {REASON: 1200, FAST: 800, VISION: 1500}
+
+
 def _build_routing(config: Any, providers: dict[str, ModelProvider]) -> dict[str, ModelSpec]:
-    """The routing table: tier -> ModelSpec. Frontier-first when Anthropic is
-    usable, else the exact Groq path the engine has always used."""
+    """The routing table: tier -> ModelSpec, chosen by CAPABILITY.
+
+    `model_provider` (auto | anthropic | openai | gemini | groq | ollama)
+    picks the family; `auto` walks the catalog priority (strongest planner
+    first) and takes the first provider actually available. Each tier then
+    gets that provider's best-fit model from the catalog. A provider that
+    can't serve a tier (e.g. Groq text-only for vision) falls back to the
+    strongest available vision provider for that tier alone. Legacy Groq
+    behavior is preserved exactly when only Groq is available.
+    """
+    from . import model_catalog as mc
+
     override = str(_cfg(config, "model_provider", "auto") or "auto").lower()
-    anthropic_ok = _safe_available(providers["anthropic"]) and override in ("auto", "anthropic")
-    groq_ok = _safe_available(providers["groq"])
+    available = [n for n in mc.AUTO_PROVIDER_PRIORITY if _safe_available(providers.get(n))]
+    if not available:  # nothing usable — keep the legacy Groq shape (degrade honestly)
+        available = ["groq"]
 
-    # Groq model names (the legacy path / fallback).
-    groq_reason = _cfg(config, "planner_model", "llama-3.3-70b-versatile")
-    groq_vision = _cfg(config, "vision_model", "meta-llama/llama-4-scout-17b-16e-instruct")
+    if override != "auto" and override in providers and _safe_available(providers[override]):
+        primary = override
+    else:
+        primary = available[0]
 
-    if anthropic_ok:
-        reason_model = _cfg(config, "anthropic_reason_model", "claude-sonnet-5")
-        fast_model = _cfg(config, "anthropic_fast_model", "claude-haiku-4-5-20251001")
-        vision_model = _cfg(config, "anthropic_vision_model", "claude-sonnet-5")
-        return {
-            REASON: ModelSpec("anthropic", reason_model, 1200),
-            FAST: ModelSpec("anthropic", fast_model, 800),
-            VISION: ModelSpec("anthropic", vision_model, 1500),
-        }
-    # No frontier model configured — behave exactly as before.
-    _ = groq_ok
-    return {
-        REASON: ModelSpec("groq", groq_reason, 800),
-        FAST: ModelSpec("groq", groq_reason, 800),
-        VISION: ModelSpec("groq", groq_vision, 1500),
-    }
+    # Per-role explicit model overrides still win (enterprise pins a model).
+    reason_override = _cfg(config, "reason_model", "") or _cfg(config, "anthropic_reason_model", "") \
+        if primary == "anthropic" else _cfg(config, "reason_model", "")
+    routing: dict[str, ModelSpec] = {}
+    for tier in (REASON, FAST, VISION):
+        prof = mc.best_for_tier(primary, tier)
+        if prof is None:
+            # This provider can't serve the tier: borrow the strongest
+            # available provider that can (vision is the usual case).
+            for alt in available:
+                prof = mc.best_for_tier(alt, tier)
+                if prof is not None:
+                    break
+        if prof is None:  # truly nothing (shouldn't happen) — legacy Groq
+            groq_reason = _cfg(config, "planner_model", "llama-3.3-70b-versatile")
+            groq_vision = _cfg(config, "vision_model",
+                               "meta-llama/llama-4-scout-17b-16e-instruct")
+            routing[tier] = ModelSpec("groq",
+                                      groq_vision if tier == VISION else groq_reason,
+                                      _TIER_TOKENS[tier])
+            continue
+        routing[tier] = ModelSpec(prof.provider, prof.model, _TIER_TOKENS[tier])
+
+    if reason_override:
+        r = routing[REASON]
+        routing[REASON] = ModelSpec(r.provider, reason_override, r.max_tokens)
+    return routing

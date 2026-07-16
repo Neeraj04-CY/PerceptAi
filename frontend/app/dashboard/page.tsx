@@ -7,7 +7,7 @@
  * history — reveals itself below, and only when it actually exists.
  * The architecture stays behind the curtain until Run is pressed. */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -17,6 +17,7 @@ import {
   ApiApproval,
   ApiAttentionItem,
   ApiIntelligenceFinding,
+  ApiModelProvider,
   ApiWorkflow,
   DashboardStats,
   ackAttention,
@@ -25,6 +26,7 @@ import {
   getAttention,
   getDashboardStats,
   getIntelligenceBriefing,
+  getModels,
   getWorkflows,
 } from "@/lib/api";
 
@@ -187,11 +189,6 @@ export default function HomePage() {
 
 /* ---------------------------------------------------------- command box */
 
-const MODELS = [
-  { value: "auto", label: "Auto", hint: "best available routing" },
-  { value: "claude", label: "Claude", hint: "frontier reasoning" },
-  { value: "groq", label: "Groq · Llama", hint: "fastest" },
-];
 const EXEC_MODES = [
   { value: "balanced", label: "Balanced", hint: "the default" },
   { value: "fast", label: "Fast", hint: "fewer retries, quickest" },
@@ -213,7 +210,36 @@ function CommandBox({ onRun }: { onRun: (payload: RunPayload) => void }) {
   const [model, setModel] = useState("auto");
   const [execMode, setExecMode] = useState("balanced");
   const [target, setTarget] = useState("local");
+  const [providers, setProviders] = useState<ApiModelProvider[]>([]);
+  const [activeProvider, setActiveProvider] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // The picker is real: only providers actually configured are offered,
+  // each with its capability metadata. Auto shows what it routes to.
+  useEffect(() => {
+    getModels().then((r) => {
+      setProviders(r.providers);
+      setActiveProvider(r.active_provider);
+    }).catch(() => { /* picker falls back to Auto only */ });
+  }, []);
+
+  const modelOptions = useMemo(() => {
+    const auto = {
+      value: "auto", label: "Auto",
+      hint: activeProvider ? `routes to ${activeProvider}` : "best available",
+    };
+    const configured = providers
+      .filter((p) => p.available)
+      .map((p) => {
+        const top = p.models[0];
+        return {
+          value: p.picker_value,
+          label: p.label,
+          hint: top ? `reasoning ${top.reasoning}/5 · ${top.latency_tier} · ${top.cost_tier}` : "",
+        };
+      });
+    return [auto, ...configured];
+  }, [providers, activeProvider]);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -246,7 +272,7 @@ function CommandBox({ onRun }: { onRun: (payload: RunPayload) => void }) {
         className="w-full resize-none bg-transparent px-5 pt-5 pb-2 text-[15.5px] leading-relaxed text-white placeholder:text-white/25 focus:outline-none"
       />
       <div className="flex flex-wrap items-center gap-2 px-3.5 pb-3.5 pt-1">
-        <Picker value={model} onChange={setModel} options={MODELS} />
+        <Picker value={model} onChange={setModel} options={modelOptions} />
         <Picker value={execMode} onChange={setExecMode} options={EXEC_MODES} />
         <Picker value={target} onChange={setTarget} options={TARGETS} />
         <button

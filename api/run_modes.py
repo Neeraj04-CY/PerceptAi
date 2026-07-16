@@ -14,12 +14,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-# model choice -> engine overrides. "auto" keeps the engine's
-# frontier-first, degrade-safe routing.
+# model choice -> engine overrides. "auto" keeps the engine's capability-
+# aware routing; the rest force a provider family. Only providers actually
+# configured are offered to the user (the /models endpoint filters).
 MODELS: dict[str, dict] = {
     "auto": {},
     "claude": {"model_provider": "anthropic"},
+    "gpt": {"model_provider": "openai"},
+    "gemini": {"model_provider": "gemini"},
     "groq": {"model_provider": "groq"},
+    "local": {"model_provider": "ollama"},
 }
 
 # execution mode -> engine overrides. Budgets and routing ONLY —

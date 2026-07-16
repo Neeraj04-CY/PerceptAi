@@ -1019,3 +1019,32 @@ export const searchOrg = (q: string, signal?: AbortSignal) =>
 export const getTimeline = (limit = 50, signal?: AbortSignal) =>
   getJsonAuth<{ entries: Array<Omit<ApiSearchHit, "snippet" | "relevance">>; sources_skipped: string[]; note: string }>(
     `/timeline?limit=${limit}`, signal);
+
+// Real multi-model support — the honest picker with capability metadata.
+export interface ApiModel {
+  provider: string;
+  model: string;
+  label: string;
+  reasoning: number;      // 1..5
+  vision: boolean;
+  context_window: number;
+  cost_tier: "free" | "cheap" | "mid" | "premium";
+  latency_tier: "fast" | "medium" | "slow";
+  serves: string[];
+}
+export interface ApiModelProvider {
+  provider: string;
+  label: string;
+  picker_value: string;   // the value to send as `model` on /execute
+  available: boolean;
+  how_to_enable: string | null;
+  is_active_auto: boolean;
+  models: ApiModel[];
+}
+export interface ApiModelsResponse {
+  active_provider: string;
+  any_frontier: boolean;
+  providers: ApiModelProvider[];
+}
+export const getModels = (signal?: AbortSignal) =>
+  getJsonAuth<ApiModelsResponse>("/models", signal);

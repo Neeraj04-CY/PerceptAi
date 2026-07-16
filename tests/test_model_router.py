@@ -190,3 +190,65 @@ def test_complete_json_parses_and_degrades():
     providers["groq"]._reply = "not json at all"
     parsed, raw = r.complete_json("x", "plan")
     assert parsed is None and raw == "not json at all"
+
+
+# --------------------------------------- multi-provider capability routing
+
+def _all_provider_fakes(available):
+    """Fakes for every provider; `available` is a set of provider names."""
+    return {n: FakeProvider(n, available=(n in available))
+            for n in ("groq", "anthropic", "openai", "gemini", "ollama")}
+
+
+def test_auto_prefers_strongest_available_planner():
+    from perceptai import model_catalog as mc
+    # Only OpenAI + Groq configured -> auto picks OpenAI (higher in priority).
+    r = _router(EngineConfig(groq_api_key="k", openai_api_key="o", model_provider="auto"),
+                providers=_all_provider_fakes({"groq", "openai"}))
+    assert r.provider_for("plan") == "openai"
+    assert r.provider_for("extract") == "openai"        # fast tier too
+    # With Gemini also present, Anthropic absent -> still OpenAI (priority order).
+    r2 = _router(EngineConfig(groq_api_key="k", openai_api_key="o", gemini_api_key="g"),
+                 providers=_all_provider_fakes({"groq", "openai", "gemini"}))
+    assert r2.provider_for("plan") == "openai"
+
+
+def test_auto_falls_to_groq_when_only_groq_available():
+    r = _router(EngineConfig(groq_api_key="k"),
+                providers=_all_provider_fakes({"groq"}))
+    assert r.provider_for("plan") == "groq"
+    assert r.model_for("plan") == "llama-3.3-70b-versatile"  # legacy model
+
+
+def test_explicit_provider_override_wins():
+    r = _router(EngineConfig(groq_api_key="k", openai_api_key="o", gemini_api_key="g",
+                             model_provider="gemini"),
+                providers=_all_provider_fakes({"groq", "openai", "gemini"}))
+    assert r.provider_for("plan") == "gemini"
+
+
+def test_text_only_provider_borrows_a_vision_provider():
+    # Groq is the primary but its 70B reasoner is text-only; vision must borrow
+    # the strongest available vision provider (openai here).
+    r = _router(EngineConfig(groq_api_key="k", openai_api_key="o", model_provider="groq"),
+                providers=_all_provider_fakes({"groq", "openai"}))
+    assert r.provider_for("plan") == "groq"
+    assert r.provider_for("perceive") in ("openai", "groq")  # a vision-capable one
+    from perceptai import model_catalog as mc
+    prof_ok = mc.profile(r.provider_for("perceive"), r.model_for("perceive"))
+    assert prof_ok is not None and prof_ok.vision
+
+
+def test_available_providers_is_honest():
+    r = _router(EngineConfig(groq_api_key="k", openai_api_key="o"),
+                providers=_all_provider_fakes({"groq", "openai"}))
+    assert set(r.available_providers()) == {"groq", "openai"}
+    assert r.active_provider() == "openai"
+
+
+def test_reason_model_pin_overrides_the_catalog():
+    r = _router(EngineConfig(groq_api_key="k", openai_api_key="o",
+                             reason_model="gpt-5.6-custom"),
+                providers=_all_provider_fakes({"groq", "openai"}))
+    assert r.model_for("plan") == "gpt-5.6-custom"
+    assert r.provider_for("plan") == "openai"

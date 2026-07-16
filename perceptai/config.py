@@ -22,11 +22,16 @@ def _default_memory_db() -> Path:
 class EngineConfig:
     groq_api_key: str = ""
     anthropic_api_key: str = ""   # frontier brain (Claude); when set, it leads
+    openai_api_key: str = ""      # GPT (also Azure OpenAI)
+    gemini_api_key: str = ""      # Google Gemini
+    ollama_host: str = ""         # local models, e.g. http://localhost:11434
 
-    # Model orchestration (Chapter XV). Roles route to a tier; a tier maps to a
-    # provider+model. Frontier-first when an Anthropic key is present, else the
-    # exact Groq path the engine has always used — zero regression.
-    model_provider: str = "auto"  # auto | anthropic | groq
+    # Model orchestration (Chapter XV, multi-provider). Roles route to a tier;
+    # a tier maps to a provider+model chosen by CAPABILITY from model_catalog.
+    # `auto` walks the priority (strongest planner first) and takes the first
+    # provider that is actually configured; legacy Groq behavior is preserved
+    # exactly when only Groq is available — zero regression.
+    model_provider: str = "auto"  # auto | anthropic | openai | gemini | groq | ollama
     # Groq path (legacy / universal fallback)
     planner_model: str = "llama-3.3-70b-versatile"
     vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -35,6 +40,7 @@ class EngineConfig:
     anthropic_reason_model: str = "claude-sonnet-5"
     anthropic_fast_model: str = "claude-haiku-4-5-20251001"
     anthropic_vision_model: str = "claude-sonnet-5"
+    reason_model: str = ""        # explicit per-run reasoner pin (any provider)
 
     # Budgets — every agentic loop is bounded
     max_steps: int = 12
@@ -158,6 +164,9 @@ class EngineConfig:
         env = {
             "groq_api_key": os.getenv("GROQ_API_KEY", ""),
             "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", ""),
+            "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
+            "gemini_api_key": os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", ""),
+            "ollama_host": os.getenv("OLLAMA_HOST", ""),
         }
         if os.getenv("MODEL_PROVIDER"):
             env["model_provider"] = os.getenv("MODEL_PROVIDER", "auto")
