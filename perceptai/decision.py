@@ -124,21 +124,28 @@ class DecisionEngine:
 
         # 7. Too unsure to act: observe first. Perception-shaped doubt with
         #    budget escalates to the expensive providers; capped so an
-        #    unobservable screen can never trap the loop.
+        #    unobservable screen can never trap the loop. Escalation requires
+        #    having ACTED at least once — a fresh screen's uncertainty is
+        #    normal and the plan should be attempted before paying for
+        #    vision (measured: a cycle-1 escalation burned ~17s before the
+        #    first action of a run the user then killed).
         if (inputs.uncertainty > inputs.strategy.uncertainty_tolerance
                 and inputs.consecutive_observations < 2):
             if (inputs.perception_gap
+                    and inputs.executed_count > 0
                     and inputs.strategy.perception_escalation != "reluctant"
                     and self._budgets.can_escalate_vision(b)):
                 return make(DecisionType.ESCALATE_PERCEPTION,
                             f"uncertainty {inputs.uncertainty:.2f} looks like a perception gap")
-            if inputs.steps_since_observation > 0:
+            if inputs.steps_since_observation > 0 and inputs.executed_count > 0:
                 return make(DecisionType.OBSERVE,
                             f"uncertainty {inputs.uncertainty:.2f} above "
                             f"tolerance {inputs.strategy.uncertainty_tolerance:.2f}")
 
-        # 8. Periodic belief verification; uncertainty shortens the interval.
-        interval = max(1, round(
+        # 8. Periodic belief verification; uncertainty shortens the interval,
+        #    floored at every-2-steps — verify-every-step is thrash, not
+        #    diligence (measured: 9 verifies in a 12-step run).
+        interval = max(2, round(
             inputs.strategy.verify_step_interval * (1.0 - 0.5 * inputs.uncertainty)
         ))
         if inputs.executed_count > 0 and inputs.steps_since_verification >= interval:

@@ -201,3 +201,28 @@ def test_cycle_budget_bounds_the_loop(harness):
     session, fakes, events = harness(plans=many, config=config)
     result = session.run("wait around")
     assert result.metadata["reasoning"]["cycles"] <= 3
+
+
+def test_recovery_never_spirals_when_budget_exhausts():
+    """Production bug: once recovery budget was spent, _recover early-returned
+    without marking the attempt, so the decision engine chose RECOVER on a
+    no-op every cycle until the wall clock — ~60s wasted. A run against an
+    ungroundable element must terminate promptly, not spin on RECOVER."""
+    from collections import Counter
+    from perceptai.simulation import build_simulated_session, fast_config
+    from perceptai.contracts import ActionType, Step
+    from evals.reasoning_bench import _step
+
+    session, fakes, events = build_simulated_session(
+        plans=[[_step("click", "click ghost", find="Ghost Button", app="myapp")]],
+        screens=[["Home", "Other", "Menu"]],
+        windows=["myapp - window"],
+        config=fast_config(max_steps=12, max_replans=4, max_recovery_total=3),
+    )
+    result = session.run("click a button that does not exist")
+    reasoning = result.metadata.get("reasoning", {})
+    decisions = Counter(t["decision"] for t in reasoning.get("trajectory", []))
+    # The run ends (failed honestly), and RECOVER never dominates the loop.
+    assert result.status.value == "failed"
+    assert decisions.get("recover", 0) <= 4, decisions
+    assert reasoning.get("cycles", 0) <= 12

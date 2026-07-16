@@ -248,6 +248,12 @@ class ExecutionEngine:
 
             if decision.type == DecisionType.RECOVER and rstate.failure is not None:
                 failed = rstate.failure
+                # Consume the recovery attempt up front: if _recover
+                # early-returns because the recovery budget is exhausted, the
+                # flag must still flip so the next decision escalates to a
+                # replan instead of choosing RECOVER again on a no-op — the
+                # spiral that burned ~60s of wall-clock in a production run.
+                rstate.recovery_attempted_for_failure = True
                 if self._recover(task, failed, context, state, rstate, executed):
                     failed.status = StepStatus.HEALED
                     reasoning.failure_resolved(rstate)
@@ -1153,6 +1159,14 @@ class ExecutionEngine:
         if latest_shot is not None:
             artifacts.append(Artifact(kind="screenshot", path=str(latest_shot), description="final screen state"))
 
+        # File deliverable: when the user asked for a CSV, the collected
+        # evidence becomes a real file in the session workspace — a report
+        # ABOUT the data is not the deliverable the user asked to be paid in.
+        csv_path = self._write_csv_deliverable(task, context)
+        if csv_path is not None:
+            artifacts.append(Artifact(kind="file", path=str(csv_path),
+                                      description=f"collected findings ({len(context.evidence)} rows, CSV)"))
+
         goal = context.goal
         if goal is None:
             from .contracts import GoalSpec
@@ -1234,6 +1248,25 @@ class ExecutionEngine:
             report=report.to_dict(), failure_type=failure_type,
         )
         return result
+
+    def _write_csv_deliverable(self, task: Task, context: TaskContext):
+        """Write collected evidence as a CSV file when the instruction asks
+        for one. Best-effort: a write failure degrades to the report-only
+        deliverable, never fails the run."""
+        if "csv" not in task.instruction.lower() or not context.evidence:
+            return None
+        try:
+            import csv as _csv
+            path = self._s.workspace / f"findings-{task.id[:8]}.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = _csv.writer(f)
+                writer.writerow(["label", "value", "source", "confidence"])
+                for e in context.evidence:
+                    writer.writerow([e.label, e.value, e.source, e.confidence])
+            return path
+        except Exception:
+            return None
 
     def _perception_metadata(self, final_world: Optional[WorldState]) -> dict:
         """Perception health for the result: snapshot counts, provider

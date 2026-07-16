@@ -97,7 +97,8 @@ Return an empty array [] ONLY if every objective and completion criterion is VIS
 
 Rules:
 - A criterion about an ongoing state (playing, running, submitted, saved, enabled) counts as achieved ONLY when the current screen shows that state (e.g. a Pause control, a confirmation message, a changed status). Having clicked toward it is NOT enough — if the final state is not visible, plan the remaining step(s) that produce it.
-- Open or focus the target application BEFORE interacting with it.
+- Open or focus the target application BEFORE interacting with it — but NEVER plan open_app for an application whose window is already listed in the world state above; focus_window it instead.
+- read_screen is ONLY for collecting information the user explicitly asked for. NEVER use it to orient or navigate — the CURRENT WORLD STATE above already tells you what is on screen. Each unnecessary read costs ~10 seconds of the user's time.
 - For "find" fields use the EXACT name of an element listed in the world state above. Never invent placeholder text.
 - Prefer elements with higher confidence; elements marked '?' are uncertain.
 - For dates/times use actual values: {now.strftime("%B %d, %Y")} / {now.strftime("%I:%M %p")}

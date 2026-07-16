@@ -85,13 +85,43 @@ def test_criteria_judge_fail_blocks_information_goals():
     assert not result.verified  # critical for report goals
 
 
-def test_criteria_judge_advisory_for_action_goals():
+def test_unmet_criterion_lands_review_even_on_action_goals():
+    """Philosophy change after a production incident: a judged-unmet
+    completion criterion (the user's own definition of done) can never be
+    outvoted into COMPLETED by grounded clicks or window checks. The run
+    lands at Review — honestly."""
     llm = _JudgeLLM('[{"criterion": 1, "met": false, "reason": "cannot confirm"}]')
     verifier = Verifier(FakeWindows(["notepad - x"]), llm, EngineConfig(groq_api_key="x"))
     ctx = _goal_ctx("action_confirmation")
     steps = [_ok("open_app", app="notepad")]
     result = verifier.verify(ctx, steps)
-    assert result.verified  # window check passes; criterion is non-critical
+    assert not result.verified
+    assert result.confidence < 0.5
+
+
+def test_play_criterion_unmet_caps_confident_grounding():
+    """The exact incident, pinned: many passing grounded/effect checks and
+    an open window, but the judge finds 'the song is playing' unmet —
+    status must be Review, never Completed."""
+    llm = _JudgeLLM('[{"criterion": 1, "met": true, "reason": "spotify open"},'
+                    ' {"criterion": 2, "met": false, "reason": "no evidence the song is playing"}]')
+    verifier = Verifier(FakeWindows(["Spotify Free"]), llm, EngineConfig(groq_api_key="x"))
+    ctx = TaskContext("open spotify liked songs and play the first song")
+    ctx.goal = GoalSpec(intent="play the first liked song",
+                        output_format="action_confirmation",
+                        completion_criteria=["Spotify is open", "The first song is playing"])
+    steps = [
+        _ok("open_app", app="Spotify"),
+        _ok("click", find="Liked Songs",
+            data={"element": "Liked Songs", "confidence": 0.95, "sources": ["uia"],
+                  "effect": {"changed": True, "summary": "71 elements new"}}),
+        _ok("click", find="Play",
+            data={"element": "Play", "confidence": 0.9, "sources": ["uia"],
+                  "effect": {"changed": True, "summary": "2 elements new"}}),
+    ]
+    result = verifier.verify(ctx, steps)
+    assert not result.verified
+    assert result.confidence < 0.5
 
 
 def test_judge_garbage_degrades_without_blocking():

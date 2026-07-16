@@ -230,6 +230,14 @@ class Verifier:
                             else _ADVISORY_CONTRADICTION)
                 factor = _clamp(c.strength) * (1.0 if c.critical else advisory)
                 support *= 1.0 - factor
+        # A judged-unmet completion criterion is the user's own definition of
+        # done, found unmet against real evidence — no amount of grounded
+        # clicks may outvote it into COMPLETED. Caps below the verified
+        # floor: the run lands at Review, honestly. (Production incident:
+        # "play the first song" verified at 0.737 while the judge said the
+        # song never played.)
+        if any(c.name.startswith("criterion:") and not c.passed for c in checks):
+            support = min(support, _VERIFIED_SUPPORT_FLOOR - 0.05)
         return round(min(support, _CONFIDENCE_CAP), 3)
 
     @staticmethod

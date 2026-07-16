@@ -134,3 +134,21 @@ def test_failed_step_contributes_no_effect_check():
                         data={"effect": {"changed": True, "summary": "spurious"}})]
     result = Verifier(FakeWindows([])).verify(TaskContext("x"), steps)
     assert all(not c.name.startswith("action_effect:") for c in result.checks)
+
+
+def test_csv_instruction_produces_a_real_file_deliverable(tmp_path):
+    """'Collect X into a CSV' must yield a FILE, not just a report about
+    the data (production incident: the collect task could never finish
+    because no artifact writer existed)."""
+    session, fakes, events = build_simulated_session(
+        plans=[[_step("read_screen", "collect the songs", find="song names", app="player")],
+               []],
+        screens=[["Song A", "Song B", "Artist X"]],
+        extractions={"song names": "Song A by Artist X; Song B by Artist X"},
+        workspace=tmp_path,
+    )
+    result = session.run("Collect all liked songs into a CSV with names and artists")
+    files = [a for a in result.artifacts if a.kind == "file" and a.path.endswith(".csv")]
+    assert files, "a CSV artifact must be produced"
+    content = open(files[0].path, encoding="utf-8").read()
+    assert "Song A" in content and "label,value,source,confidence" in content
